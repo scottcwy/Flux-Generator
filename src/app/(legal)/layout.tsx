@@ -24,7 +24,7 @@ export default function LegalLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html>
       <body>
         <div>
           <a

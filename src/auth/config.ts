@@ -114,8 +114,19 @@ export const providerMap = providers
   })
   .filter((provider) => provider.id !== "google-one-tap");
 
+const isDev = process.env.NODE_ENV !== "production";
+
 export const authOptions: NextAuthConfig = {
   providers,
+  // 显式设置会话与主机信任，避免本地开发环境配置缺失导致 500
+  session: { strategy: "jwt" },
+  trustHost: true,
+  // 为本地开发提供默认 secret，生产环境必须通过环境变量提供
+  // 同时支持 AUTH_SECRET 与 NEXTAUTH_SECRET，避免环境变量名称不一致导致的配置错误
+  secret:
+    process.env.AUTH_SECRET ||
+    process.env.NEXTAUTH_SECRET ||
+    (isDev ? "dev-secret-change-me" : undefined),
   pages: {
     signIn: "/auth/signin",
   },

@@ -1,6 +1,11 @@
-# 认证相关配置
-NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=your-nextauth-secret-key
+# 认证相关配置（Auth.js v5）
+# 必填：用于加密会话和JWT，请使用至少32位的强随机字符串
+AUTH_SECRET=your-auth-secret-key
+
+# 可选：仅当你的应用部署在反向代理后或需要显式信任主机时
+# AUTH_TRUST_HOST=true
+# 可选：如果使用自定义基础路径或特殊部署场景，可设置 AUTH_URL
+# AUTH_URL=http://localhost:3000
 
 # Coze API配置
 COZE_API_URL="https://api.coze.cn"

@@ -46,12 +46,24 @@ pnpm dev
 # Copy environment template
 cp .env.example .env.local
 
-# Configure AI service
-OPENAI_API_KEY="your_openai_api_key"
+# Required: Authentication secret for session JWT
+# Generate a strong secret, for example:
+# openssl rand -base64 32
+AUTH_SECRET="your_auth_secret_key"
 
-# Optional: Authentication
-GOOGLE_CLIENT_ID="your_google_client_id"
-GOOGLE_CLIENT_SECRET="your_google_client_secret"
+# Optional: OAuth providers
+# Enable Google or GitHub by providing client credentials and toggles
+AUTH_GOOGLE_ID="your_google_client_id"
+AUTH_GOOGLE_SECRET="your_google_client_secret"
+NEXT_PUBLIC_AUTH_GOOGLE_ENABLED="false"
+
+AUTH_GITHUB_ID="your_github_client_id"
+AUTH_GITHUB_SECRET="your_github_client_secret"
+NEXT_PUBLIC_AUTH_GITHUB_ENABLED="false"
+
+# Tip: In local development, if you forget to set AUTH_SECRET,
+# the app falls back to a dev-only secret to avoid 500 errors.
+# In production, always set AUTH_SECRET.
 ```
 
 ## 🎯 Usage
