@@ -115,6 +115,9 @@ fn onboarding_lines(project: &crate::gui::state::ProjectSummary) -> Vec<String> 
             ),
             "Adopt all emits a GUI intent; no Skill is adopted automatically.".to_string(),
         ]);
+        if !project.pending_conflicts.is_empty() {
+            lines.push("Conflicts remain: import as new or skip.".to_string());
+        }
         return lines;
     }
 

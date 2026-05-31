@@ -1,6 +1,6 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use skill_kits::core::{
-    adopt::{project_adopt, project_adopt_all, ProjectAdoptRequest},
+    adopt::{project_adopt, project_adopt_all, project_adopt_conflict_as_new, ProjectAdoptRequest},
     agents::{AgentConfig, AgentKind},
     config::Config,
     hash::hash_skill_dir,
@@ -427,6 +427,79 @@ fn project_adopt_all_reports_partial_success() {
     assert_eq!(report.imported, 1);
     assert_eq!(report.conflicts, 1);
     assert!(project_deployment_status(&paths, &project, &AgentId::new("codex"), "fresh").is_ok());
+}
+
+#[test]
+fn project_adopt_conflict_as_new_imports_same_name_different_hash_without_replacing_original() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let mut original = seed_managed_skill(
+        &paths,
+        "frontend-design-a1b2c3d4",
+        "frontend-design",
+        "# Managed original\n",
+    );
+    original.content_hash = hash_skill_dir(&original.managed_path).unwrap();
+    write_toml(
+        &paths.skills_registry_file,
+        &SkillsRegistry {
+            version: 1,
+            skills: vec![original.clone()],
+        },
+    );
+    let project = Utf8PathBuf::from_path_buf(temp_dir.path().join("project")).unwrap();
+    let deployment_dir = project.join(".agents/skills/frontend-design");
+    write_skill(&deployment_dir, "# Project conflict\n");
+    let original_body = std::fs::read_to_string(original.managed_path.join("SKILL.md")).unwrap();
+
+    let report = project_adopt_conflict_as_new(ProjectAdoptRequest {
+        app_paths: &paths,
+        project_path: &project,
+        agent_id: &AgentId::new("codex"),
+        skill_name: "frontend-design",
+    })
+    .unwrap();
+
+    assert_eq!(report.imported, 1);
+    assert_eq!(report.conflicts, 0);
+    assert_eq!(
+        std::fs::read_to_string(original.managed_path.join("SKILL.md")).unwrap(),
+        original_body
+    );
+
+    let skills: SkillsRegistry =
+        toml::from_str(&std::fs::read_to_string(&paths.skills_registry_file).unwrap()).unwrap();
+    assert_eq!(skills.skills.len(), 2);
+    let adopted = skills
+        .skills
+        .iter()
+        .find(|skill| skill.id != original.id)
+        .unwrap();
+    assert_eq!(adopted.name, "frontend-design");
+    assert_ne!(adopted.id, original.id);
+    assert_ne!(adopted.managed_path, original.managed_path);
+    assert_eq!(
+        std::fs::read_to_string(adopted.managed_path.join("SKILL.md")).unwrap(),
+        "# Project conflict\n"
+    );
+    assert_eq!(
+        adopted.content_hash,
+        hash_skill_dir(&adopted.managed_path).unwrap()
+    );
+
+    let deployments: DeploymentsRegistry =
+        toml::from_str(&std::fs::read_to_string(&paths.deployments_registry_file).unwrap())
+            .unwrap();
+    assert_eq!(deployments.deployments.len(), 1);
+    let deployment = &deployments.deployments[0];
+    assert_eq!(deployment.skill_id, adopted.id);
+    assert_eq!(deployment.deployment_path, deployment_dir);
+    assert_eq!(deployment.skill_name, "frontend-design");
+    assert_eq!(deployment.deployed_from_hash, adopted.content_hash);
+    assert_eq!(
+        deployment.baseline_hash,
+        hash_skill_dir(&deployment_dir).unwrap()
+    );
 }
 
 #[test]

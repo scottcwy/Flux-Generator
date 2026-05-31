@@ -13,8 +13,8 @@ use skill_kits::core::{
     },
 };
 use skill_kits::gui::state::{
-    GuiActionIntent, GuiController, GuiModel, GuiScope, NavigationView, ProjectSummary,
-    DRIFT_REMOVE_CONFIRMATION_MESSAGE,
+    GuiActionIntent, GuiController, GuiModel, GuiScope, NavigationView, ProjectConflict,
+    ProjectSummary, DRIFT_REMOVE_CONFIRMATION_MESSAGE,
 };
 use skill_kits::gui::{agent_actions, project_actions, AgentAction, ProjectAction};
 use tempfile::TempDir;
@@ -270,6 +270,8 @@ fn projects_onboarding_renders_adopt_all_for_discovered_unmanaged_summary() {
         deployment_count: 0,
         discovered_unmanaged_count: 2,
         last_adopt_all_result: None,
+        pending_conflicts: Vec::new(),
+        skipped_conflicts: Vec::new(),
     });
 
     let renderable = model.renderable_view();
@@ -436,6 +438,8 @@ fn project_adopt_all_intent_executes_for_discovered_project_skills() {
         deployment_count: 0,
         discovered_unmanaged_count: 1,
         last_adopt_all_result: None,
+        pending_conflicts: Vec::new(),
+        skipped_conflicts: Vec::new(),
     });
     model
         .request_adopt_all_discovered_for_selected_project()
@@ -518,6 +522,8 @@ fn project_adopt_all_intent_runs_for_multiple_enabled_agents() {
         deployment_count: 0,
         discovered_unmanaged_count: 2,
         last_adopt_all_result: None,
+        pending_conflicts: Vec::new(),
+        skipped_conflicts: Vec::new(),
     });
     model
         .request_adopt_all_discovered_for_selected_project()
@@ -583,6 +589,8 @@ fn project_adopt_all_keeps_conflicting_project_skills_discovered() {
         deployment_count: 0,
         discovered_unmanaged_count: 1,
         last_adopt_all_result: None,
+        pending_conflicts: Vec::new(),
+        skipped_conflicts: Vec::new(),
     });
     model
         .request_adopt_all_discovered_for_selected_project()
@@ -599,9 +607,27 @@ fn project_adopt_all_keeps_conflicting_project_skills_discovered() {
     assert_eq!(summary.discovered_unmanaged_count, 1);
     assert_eq!(summary.last_adopt_all_result.as_ref().unwrap().imported, 0);
     assert_eq!(summary.last_adopt_all_result.as_ref().unwrap().conflicts, 1);
+    assert_eq!(
+        summary.pending_conflicts,
+        vec![ProjectConflict {
+            agent_id: AgentId::new("codex"),
+            skill_name: "conflict".to_string(),
+        }]
+    );
     assert_eq!(model.skills.len(), 1);
     assert!(model.deployments.is_empty());
-    assert_eq!(project_actions(&model), vec![ProjectAction::AdoptAll]);
+    assert_eq!(
+        project_actions(&model),
+        vec![ProjectAction::ImportAsNew, ProjectAction::Skip]
+    );
+    assert_eq!(
+        model.request_import_selected_project_conflict_as_new(),
+        Some(GuiActionIntent::ProjectImportConflictAsNew {
+            project_path: project.clone(),
+            agent_id: AgentId::new("codex"),
+            skill_name: "conflict".to_string(),
+        })
+    );
     let onboarding = model
         .renderable_view()
         .inspector_sections
@@ -611,6 +637,237 @@ fn project_adopt_all_keeps_conflicting_project_skills_discovered() {
     assert!(onboarding
         .lines
         .contains(&"0 adopted, 1 conflicts".to_string()));
+    assert!(onboarding
+        .lines
+        .contains(&"Conflicts remain: import as new or skip.".to_string()));
+}
+
+#[test]
+fn project_conflict_import_as_new_intent_resolves_first_pending_conflict() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let project = project_path(&temp_dir, "sample-app");
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    let mut managed = managed_skill_with_name(&paths, "conflict");
+    write_skill(&managed.managed_path, "# Managed Conflict\n");
+    managed.content_hash = hash_skill_dir(&managed.managed_path).unwrap();
+    write_skills_registry(
+        &paths,
+        &SkillsRegistry {
+            version: 1,
+            skills: vec![managed],
+        },
+    )
+    .unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    write_skill(
+        &project.join(".agents/skills/conflict"),
+        "# Project Conflict\n",
+    );
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.select_project(project.clone());
+    model.project_summaries.push(ProjectSummary {
+        name: "sample-app".to_string(),
+        path: project.clone(),
+        deployment_count: 0,
+        discovered_unmanaged_count: 1,
+        last_adopt_all_result: None,
+        pending_conflicts: vec![ProjectConflict {
+            agent_id: AgentId::new("codex"),
+            skill_name: "conflict".to_string(),
+        }],
+        skipped_conflicts: Vec::new(),
+    });
+    model
+        .request_import_selected_project_conflict_as_new()
+        .unwrap();
+
+    let controller = GuiController::new(paths);
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+
+    assert_eq!(model.skills.len(), 2);
+    assert_eq!(model.deployments.len(), 1);
+    let summary = model
+        .project_summaries
+        .iter()
+        .find(|summary| summary.path == project)
+        .unwrap();
+    assert_eq!(summary.discovered_unmanaged_count, 0);
+    assert!(summary.pending_conflicts.is_empty());
+}
+
+#[test]
+fn project_conflict_skip_dismisses_first_pending_conflict_without_registry_mutation() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let project = project_path(&temp_dir, "sample-app");
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.select_project(project.clone());
+    model.project_summaries.push(ProjectSummary {
+        name: "sample-app".to_string(),
+        path: project,
+        deployment_count: 0,
+        discovered_unmanaged_count: 1,
+        last_adopt_all_result: None,
+        pending_conflicts: vec![ProjectConflict {
+            agent_id: AgentId::new("codex"),
+            skill_name: "conflict".to_string(),
+        }],
+        skipped_conflicts: Vec::new(),
+    });
+
+    assert_eq!(model.skip_selected_project_conflict(), Some(()));
+    assert!(model.project_summaries[0].pending_conflicts.is_empty());
+    assert!(!project_actions(&model).contains(&ProjectAction::AdoptAll));
+    assert_eq!(read_skills_registry(&paths).unwrap().skills.len(), 0);
+    assert_eq!(
+        read_deployments_registry(&paths).unwrap().deployments.len(),
+        0
+    );
+}
+
+#[test]
+fn refresh_project_keeps_unresolved_project_conflicts_actionable() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let project = project_path(&temp_dir, "sample-app");
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    let mut managed = managed_skill_with_name(&paths, "conflict");
+    write_skill(&managed.managed_path, "# Managed Conflict\n");
+    managed.content_hash = hash_skill_dir(&managed.managed_path).unwrap();
+    write_skills_registry(
+        &paths,
+        &SkillsRegistry {
+            version: 1,
+            skills: vec![managed],
+        },
+    )
+    .unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    write_skill(
+        &project.join(".agents/skills/conflict"),
+        "# Project Conflict\n",
+    );
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.select_project(project.clone());
+    model.project_summaries.push(ProjectSummary {
+        name: "sample-app".to_string(),
+        path: project.clone(),
+        deployment_count: 0,
+        discovered_unmanaged_count: 1,
+        last_adopt_all_result: None,
+        pending_conflicts: Vec::new(),
+        skipped_conflicts: Vec::new(),
+    });
+    model
+        .request_adopt_all_discovered_for_selected_project()
+        .unwrap();
+
+    let controller = GuiController::new(paths);
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+    assert_eq!(
+        project_actions(&model),
+        vec![ProjectAction::ImportAsNew, ProjectAction::Skip]
+    );
+
+    model.request_refresh_selected_project().unwrap();
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+
+    let summary = model
+        .project_summaries
+        .iter()
+        .find(|summary| summary.path == project)
+        .unwrap();
+    assert_eq!(
+        summary.pending_conflicts,
+        vec![ProjectConflict {
+            agent_id: AgentId::new("codex"),
+            skill_name: "conflict".to_string(),
+        }]
+    );
+    assert_eq!(
+        project_actions(&model),
+        vec![ProjectAction::ImportAsNew, ProjectAction::Skip]
+    );
+}
+
+#[test]
+fn skipped_conflict_does_not_block_adopt_all_for_new_unrelated_project_skill() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let project = project_path(&temp_dir, "sample-app");
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    let mut managed = managed_skill_with_name(&paths, "conflict");
+    write_skill(&managed.managed_path, "# Managed Conflict\n");
+    managed.content_hash = hash_skill_dir(&managed.managed_path).unwrap();
+    write_skills_registry(
+        &paths,
+        &SkillsRegistry {
+            version: 1,
+            skills: vec![managed],
+        },
+    )
+    .unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    write_skill(
+        &project.join(".agents/skills/conflict"),
+        "# Project Conflict\n",
+    );
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.select_project(project.clone());
+    model.project_summaries.push(ProjectSummary {
+        name: "sample-app".to_string(),
+        path: project.clone(),
+        deployment_count: 0,
+        discovered_unmanaged_count: 1,
+        last_adopt_all_result: None,
+        pending_conflicts: vec![ProjectConflict {
+            agent_id: AgentId::new("codex"),
+            skill_name: "conflict".to_string(),
+        }],
+        skipped_conflicts: Vec::new(),
+    });
+
+    assert_eq!(model.skip_selected_project_conflict(), Some(()));
+    write_skill(
+        &project.join(".agents/skills/new-project-skill"),
+        "# New Project Skill\n",
+    );
+    model.request_refresh_selected_project().unwrap();
+    let controller = GuiController::new(paths);
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+
+    assert_eq!(project_actions(&model), vec![ProjectAction::AdoptAll]);
+    model
+        .request_adopt_all_discovered_for_selected_project()
+        .unwrap();
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+
+    let summary = model
+        .project_summaries
+        .iter()
+        .find(|summary| summary.path == project)
+        .unwrap();
+    assert_eq!(summary.discovered_unmanaged_count, 0);
+    assert_eq!(model.skills.len(), 2);
+    assert!(model
+        .skills
+        .iter()
+        .any(|skill| skill.name == "new-project-skill"));
+    assert!(model.skills.iter().any(|skill| skill.name == "conflict"));
+    assert_eq!(model.deployments.len(), 1);
+    assert_eq!(model.deployments[0].skill_name, "new-project-skill");
 }
 
 #[test]

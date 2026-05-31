@@ -13,6 +13,8 @@ use state::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProjectAction {
     AdoptAll,
+    ImportAsNew,
+    Skip,
     Deploy,
     Enable,
     Disable,
@@ -42,6 +44,7 @@ impl AgentAction {
 
 impl ProjectAction {
     const ONBOARDING: [Self; 1] = [Self::AdoptAll];
+    const CONFLICT: [Self; 2] = [Self::ImportAsNew, Self::Skip];
 
     const NORMAL: [Self; 7] = [
         Self::Deploy,
@@ -58,6 +61,8 @@ impl ProjectAction {
     fn label(self) -> &'static str {
         match self {
             Self::AdoptAll => "Adopt all",
+            Self::ImportAsNew => "Import as new",
+            Self::Skip => "Skip",
             Self::Deploy => "Deploy",
             Self::Enable => "Enable",
             Self::Disable => "Disable",
@@ -80,7 +85,15 @@ pub fn agent_actions(model: &GuiModel) -> Vec<AgentAction> {
 pub fn project_actions(model: &GuiModel) -> Vec<ProjectAction> {
     if model
         .selected_project_summary()
-        .is_some_and(|project| project.discovered_unmanaged_count > 0)
+        .is_some_and(|project| !project.pending_conflicts.is_empty())
+        && model.selected_deployment_status().is_none()
+    {
+        return ProjectAction::CONFLICT.to_vec();
+    }
+
+    if model
+        .selected_project_summary()
+        .is_some_and(|project| project.discovered_unmanaged_count > project.pending_conflicts.len())
         && model.selected_deployment_status().is_none()
     {
         return ProjectAction::ONBOARDING.to_vec();
@@ -388,6 +401,12 @@ fn render_project_action_button(
     match action {
         ProjectAction::AdoptAll => {
             let _ = model.request_adopt_all_discovered_for_selected_project();
+        }
+        ProjectAction::ImportAsNew => {
+            let _ = model.request_import_selected_project_conflict_as_new();
+        }
+        ProjectAction::Skip => {
+            let _ = model.skip_selected_project_conflict();
         }
         ProjectAction::Deploy => {
             if let Some(agent_id) = model.agents.first().map(|agent| agent.id.clone()) {

@@ -136,6 +136,50 @@ pub fn project_adopt(request: ProjectAdoptRequest<'_>) -> Result<AdoptReport> {
     })
 }
 
+pub fn project_adopt_conflict_as_new(request: ProjectAdoptRequest<'_>) -> Result<AdoptReport> {
+    let deployment_dir = project_skill_dir(
+        request.app_paths,
+        request.project_path,
+        request.agent_id,
+        request.skill_name,
+    )?;
+    if !deployment_dir.exists() {
+        return Err(SkillKitsError::SkillNotFound {
+            query: request.skill_name.to_string(),
+        });
+    }
+    let managed_hash = hash_skill_dir(&deployment_dir)?;
+    let baseline_hash = hash_project_deployment_dir(&deployment_dir)?;
+    let skills = read_skills_registry(request.app_paths)?;
+    let skill_id = unique_skill_id(
+        request.skill_name,
+        &managed_hash,
+        skills.skills.iter().map(|skill| &skill.id),
+    )
+    .into_string();
+    let managed_path = request.app_paths.skills_dir.join(&skill_id);
+    copy_deployment_to_managed(&deployment_dir, &managed_path)?;
+    let managed_skill = ManagedSkill {
+        id: SkillId::new(&skill_id),
+        name: request.skill_name.to_string(),
+        source: SkillSource::ProjectAdopt {
+            agent_id: request.agent_id.clone(),
+            project_path: request.project_path.to_path_buf(),
+            source_path: deployment_dir.clone(),
+        },
+        managed_path,
+        content_hash: managed_hash.clone(),
+        metadata: None,
+        created_at: now_string(),
+        updated_at: now_string(),
+    };
+    record_new_project_adopt(&request, &deployment_dir, managed_skill, &baseline_hash)?;
+    Ok(AdoptReport {
+        imported: 1,
+        conflicts: 0,
+    })
+}
+
 pub fn project_adopt_all(request: ProjectAdoptRequest<'_>) -> Result<AdoptReport> {
     let mut imported = 0;
     let mut conflicts = 0;
