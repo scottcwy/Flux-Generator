@@ -2,7 +2,7 @@ use crate::core::agents::AgentKind;
 use crate::gui::state::{GuiModel, InspectorSection, RenderRow, RenderableView};
 
 pub fn view_name() -> &'static str {
-    "Agents"
+    "Agent"
 }
 
 pub fn renderable(model: &GuiModel) -> RenderableView {

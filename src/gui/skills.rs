@@ -8,7 +8,7 @@ use crate::gui::state::{
 };
 
 pub fn view_name() -> &'static str {
-    "Skills"
+    "Skill"
 }
 
 pub fn renderable(model: &GuiModel) -> RenderableView {

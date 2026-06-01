@@ -735,6 +735,25 @@ fn each_navigation_view_loads_from_app_paths_model() {
 }
 
 #[test]
+fn navigation_titles_match_frozen_agent_space_shape() {
+    assert_eq!(NavigationView::Dashboard.title(), "Dashboard");
+    assert_eq!(NavigationView::Skills.title(), "Skill");
+    assert_eq!(NavigationView::Agents.title(), "Agent");
+    assert_eq!(NavigationView::Projects.title(), "Project");
+
+    let mut model = GuiModel::default();
+    for (view, title) in [
+        (NavigationView::Dashboard, "Dashboard"),
+        (NavigationView::Skills, "Skill"),
+        (NavigationView::Agents, "Agent"),
+        (NavigationView::Projects, "Project"),
+    ] {
+        model.navigate(view);
+        assert_eq!(model.renderable_view().title, title);
+    }
+}
+
+#[test]
 fn selecting_render_rows_updates_view_selection_without_filesystem_mutation() {
     let temp_dir = TempDir::new().unwrap();
     let paths = test_paths(&temp_dir);

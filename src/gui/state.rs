@@ -58,9 +58,9 @@ impl NavigationView {
     pub fn title(self) -> &'static str {
         match self {
             Self::Dashboard => "Dashboard",
-            Self::Skills => "Skills",
-            Self::Agents => "Agents",
-            Self::Projects => "Projects",
+            Self::Skills => "Skill",
+            Self::Agents => "Agent",
+            Self::Projects => "Project",
         }
     }
 }

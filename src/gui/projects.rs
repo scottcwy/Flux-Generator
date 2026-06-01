@@ -2,7 +2,7 @@ use crate::core::registry::{DeploymentStatus, ToggleState};
 use crate::gui::state::{GuiModel, InspectorSection, RenderRow, RenderableView};
 
 pub fn view_name() -> &'static str {
-    "Projects"
+    "Project"
 }
 
 pub fn renderable(model: &GuiModel) -> RenderableView {
