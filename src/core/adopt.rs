@@ -1,5 +1,5 @@
 use crate::core::{
-    agents::{configured_project_skill_dirs_for, global_skill_dirs_for},
+    agents::{configured_global_skill_dirs_for, configured_project_skill_dirs_for},
     error::{Result, SkillKitsError},
     fs::{copy_dir_clean_source_to_empty_target, ensure_dir},
     hash::hash_skill_dir,
@@ -35,11 +35,15 @@ pub struct AdoptReport {
     pub conflicts: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResilientAdoptReport {
+    pub imported: usize,
+    pub conflicts: usize,
+    pub failures: usize,
+}
+
 pub fn global_agent_adopt(request: GlobalAgentAdoptRequest<'_>) -> Result<AdoptReport> {
-    let global_roots =
-        global_skill_dirs_for(request.agent_id).ok_or_else(|| SkillKitsError::AgentNotFound {
-            agent_id: request.agent_id.clone(),
-        })?;
+    let global_roots = configured_global_skill_dirs_for(request.app_paths, request.agent_id)?;
     let mut imported = 0;
     let mut conflicts = 0;
 
@@ -73,6 +77,70 @@ pub fn global_agent_adopt(request: GlobalAgentAdoptRequest<'_>) -> Result<AdoptR
     Ok(AdoptReport {
         imported,
         conflicts,
+    })
+}
+
+pub fn global_agent_adopt_resilient(
+    request: GlobalAgentAdoptRequest<'_>,
+) -> Result<ResilientAdoptReport> {
+    let global_roots = configured_global_skill_dirs_for(request.app_paths, request.agent_id)?;
+    let mut imported = 0;
+    let mut conflicts = 0;
+    let mut failures = 0;
+
+    for global_root in global_roots {
+        let global_root = expand_home(&global_root, request.home_dir);
+        if !global_root.exists() {
+            continue;
+        }
+        let entries = match std::fs::read_dir(&global_root) {
+            Ok(entries) => entries,
+            Err(_) => {
+                failures += 1;
+                continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => {
+                    failures += 1;
+                    continue;
+                }
+            };
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => {
+                    failures += 1;
+                    continue;
+                }
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let source_path = match Utf8PathBuf::from_path_buf(entry.path()) {
+                Ok(source_path) => source_path,
+                Err(_) => {
+                    failures += 1;
+                    continue;
+                }
+            };
+            if !is_global_adoptable_skill_dir(&source_path) {
+                continue;
+            }
+            match adopt_global_skill(&request, &source_path) {
+                Ok(GlobalAdoptOutcome::Imported) => imported += 1,
+                Ok(GlobalAdoptOutcome::Skipped) => {}
+                Ok(GlobalAdoptOutcome::Conflict) => conflicts += 1,
+                Err(_) => failures += 1,
+            }
+        }
+    }
+
+    Ok(ResilientAdoptReport {
+        imported,
+        conflicts,
+        failures,
     })
 }
 

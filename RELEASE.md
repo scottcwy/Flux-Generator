@@ -109,6 +109,10 @@ Manual acceptance:
 - The app uses the dark monochrome workbench style, compact tables, a sidebar,
   and a right inspector without marketing panels or gradient/card-heavy UI.
 - Empty Skills and Projects states explain the next safe action.
+- Clicking Adopt Agent Skills scans Global Skill Directories for every enabled
+  Agent, imports detectable non-conflicting Skills into Global Inventory,
+  reports partial success/conflicts/failures, and does not modify Agent source
+  directories.
 - Clicking Refresh, Adopt all, Import as new, Skip, Scan, Deploy, Enable,
   Disable, Redeploy, Overwrite, Promote, Remove, and Uninstall either completes
   the action or shows a visible success/error message.

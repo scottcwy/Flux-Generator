@@ -1,5 +1,8 @@
 use crate::core::{
-    adopt::{project_adopt, project_adopt_all, project_adopt_conflict_as_new, ProjectAdoptRequest},
+    adopt::{
+        global_agent_adopt_resilient, project_adopt, project_adopt_all,
+        project_adopt_conflict_as_new, GlobalAgentAdoptRequest, ProjectAdoptRequest,
+    },
     agents::{
         add_custom_agent_config, remove_custom_agent_config, reset_agent_project_skill_dirs,
         update_agent_project_skill_dirs, AgentConfig, AgentKind,
@@ -66,6 +69,7 @@ pub enum GuiActionIntent {
     InstallLocalSkill {
         source_path: Utf8PathBuf,
     },
+    AdoptAllAgentSkills,
     ScanSkill {
         skill_id: SkillId,
     },
@@ -144,6 +148,11 @@ pub struct GuiController {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GuiControllerOutcome {
     None,
+    AgentSkillsAdopted {
+        imported: usize,
+        conflicts: usize,
+        failures: usize,
+    },
     SkillInstalled {
         skill_id: SkillId,
         scanned_hash: String,
@@ -259,6 +268,42 @@ impl GuiController {
                     skill_id: result.skill.id,
                     scanned_hash: result.skill.content_hash,
                     findings: result.risk_findings,
+                }
+            }
+            GuiActionIntent::AdoptAllAgentSkills => {
+                let home = dirs::home_dir().ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "home directory")
+                })?;
+                let home = Utf8PathBuf::from_path_buf(home).map_err(|path| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("home path is not UTF-8: {}", path.display()),
+                    )
+                })?;
+                let config = read_config(&self.paths)?;
+                let mut imported = 0;
+                let mut conflicts = 0;
+                let mut failures = 0;
+                for agent in config.agents.iter().filter(|agent| agent.enabled) {
+                    match global_agent_adopt_resilient(GlobalAgentAdoptRequest {
+                        app_paths: &self.paths,
+                        agent_id: &agent.id,
+                        home_dir: &home,
+                    }) {
+                        Ok(report) => {
+                            imported += report.imported;
+                            conflicts += report.conflicts;
+                            failures += report.failures;
+                        }
+                        Err(_) => {
+                            failures += 1;
+                        }
+                    }
+                }
+                GuiControllerOutcome::AgentSkillsAdopted {
+                    imported,
+                    conflicts,
+                    failures,
                 }
             }
             GuiActionIntent::ScanSkill { skill_id } => {
@@ -958,6 +1003,10 @@ impl GuiModel {
         })
     }
 
+    pub fn request_adopt_all_agent_skills(&mut self) -> Option<GuiActionIntent> {
+        self.push_intent(GuiActionIntent::AdoptAllAgentSkills)
+    }
+
     pub fn cancel_install_local_skill(&mut self) {
         self.install_local_skill_draft = None;
     }
@@ -1408,8 +1457,14 @@ impl GuiModel {
         self.agent_editor_draft = None;
         self.install_local_skill_draft = None;
         self.open_project_draft = None;
+        let status_kind = match &outcome {
+            GuiControllerOutcome::AgentSkillsAdopted { failures, .. } if *failures > 0 => {
+                GuiStatusKind::Error
+            }
+            _ => GuiStatusKind::Success,
+        };
         self.last_status = Some(GuiStatus {
-            kind: GuiStatusKind::Success,
+            kind: status_kind,
             message: success_message,
         });
         self.apply_controller_outcome(outcome);
@@ -1443,6 +1498,27 @@ impl GuiModel {
                 };
                 format!("Installed {skill_name}: {summary}.")
             }
+            GuiActionIntent::AdoptAllAgentSkills => match outcome {
+                GuiControllerOutcome::AgentSkillsAdopted {
+                    imported,
+                    conflicts,
+                    failures,
+                } => {
+                    let failure_summary = if *failures == 0 {
+                        String::new()
+                    } else {
+                        format!(
+                            ", {failures} failure{}",
+                            if *failures == 1 { "" } else { "s" }
+                        )
+                    };
+                    format!(
+                        "Adopted Agent Skills into Global Inventory: {imported} imported, {conflicts} conflict{}{failure_summary}.",
+                        if *conflicts == 1 { "" } else { "s" },
+                    )
+                }
+                _ => "Adopted Agent Skills into Global Inventory.".to_string(),
+            },
             GuiActionIntent::ScanSkill { skill_id } => {
                 let skill_name = self
                     .skills
@@ -1615,7 +1691,7 @@ impl GuiModel {
 
     fn apply_controller_outcome(&mut self, outcome: GuiControllerOutcome) {
         match outcome {
-            GuiControllerOutcome::None => {}
+            GuiControllerOutcome::None | GuiControllerOutcome::AgentSkillsAdopted { .. } => {}
             GuiControllerOutcome::SkillInstalled {
                 skill_id,
                 scanned_hash,
@@ -1862,6 +1938,7 @@ impl Default for GuiModel {
 fn action_label(intent: &GuiActionIntent) -> &'static str {
     match intent {
         GuiActionIntent::InstallLocalSkill { .. } => "Install local Skill",
+        GuiActionIntent::AdoptAllAgentSkills => "Adopt Agent Skills",
         GuiActionIntent::ScanSkill { .. } => "Scan",
         GuiActionIntent::UninstallSkill { .. } => "Uninstall",
         GuiActionIntent::DeploySkill { .. } => "Deploy",

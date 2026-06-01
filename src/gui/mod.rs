@@ -17,6 +17,7 @@ use std::thread;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillAction {
     InstallLocal,
+    AdoptAgentSkills,
     Scan,
     Deploy,
     Uninstall,
@@ -98,6 +99,7 @@ impl SkillAction {
     fn label(self) -> &'static str {
         match self {
             Self::InstallLocal => "Install local",
+            Self::AdoptAgentSkills => "Adopt Agent Skills",
             Self::Scan => "Scan",
             Self::Deploy => "Deploy",
             Self::Uninstall => "Uninstall",
@@ -106,7 +108,7 @@ impl SkillAction {
 }
 
 pub fn skill_actions(model: &GuiModel) -> Vec<SkillAction> {
-    let mut actions = vec![SkillAction::InstallLocal];
+    let mut actions = vec![SkillAction::InstallLocal, SkillAction::AdoptAgentSkills];
     if model.selected_skill().is_none() {
         return actions;
     }
@@ -585,6 +587,9 @@ fn render_skill_action_button(
     match action {
         SkillAction::InstallLocal => {
             model.begin_install_local_skill();
+        }
+        SkillAction::AdoptAgentSkills => {
+            let _ = model.request_adopt_all_agent_skills();
         }
         SkillAction::Scan => {
             let _ = model.request_scan_selected_skill();

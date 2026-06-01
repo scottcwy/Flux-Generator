@@ -149,6 +149,28 @@ pub fn global_skill_dirs_for(agent_id: &AgentId) -> Option<Vec<Utf8PathBuf>> {
     built_in_agent_config(agent_id).map(|agent| agent.global_skill_dirs)
 }
 
+pub fn configured_global_skill_dirs_for(
+    paths: &AppPaths,
+    agent_id: &AgentId,
+) -> Result<Vec<Utf8PathBuf>> {
+    let config = read_config(paths)?;
+    if let Some(agent) = config
+        .agents
+        .into_iter()
+        .find(|agent| agent.id == *agent_id)
+    {
+        return if agent.global_skill_dirs.is_empty() {
+            Ok(global_skill_dirs_for(agent_id).unwrap_or_default())
+        } else {
+            Ok(agent.global_skill_dirs)
+        };
+    }
+
+    global_skill_dirs_for(agent_id).ok_or_else(|| SkillKitsError::AgentNotFound {
+        agent_id: agent_id.clone(),
+    })
+}
+
 pub fn add_custom_agent_config(
     paths: &AppPaths,
     id: AgentId,

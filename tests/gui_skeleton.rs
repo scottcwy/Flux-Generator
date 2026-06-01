@@ -509,12 +509,19 @@ fn gui_empty_states_are_contextual_and_actionable() {
         renderable.empty_message,
         Some("No managed Skills yet. Install a local Skill or adopt existing Agent Skills.")
     );
-    assert_eq!(skill_actions(&model), vec![SkillAction::InstallLocal]);
+    assert_eq!(
+        skill_actions(&model),
+        vec![SkillAction::InstallLocal, SkillAction::AdoptAgentSkills]
+    );
+    assert_eq!(
+        model.request_adopt_all_agent_skills(),
+        Some(GuiActionIntent::AdoptAllAgentSkills)
+    );
     assert_eq!(
         section_lines(&model, "Empty"),
         vec![
             "No managed Skills yet.".to_string(),
-            "Install a local Skill directory, or open Projects to adopt existing Agent Skills."
+            "Install a local Skill directory, or adopt Skills from enabled Agent directories."
                 .to_string(),
         ]
     );
@@ -532,6 +539,190 @@ fn gui_empty_states_are_contextual_and_actionable() {
             "No Recent Project is selected.".to_string(),
             "Open a project from the Scope switcher before scanning or deploying.".to_string(),
         ]
+    );
+}
+
+#[test]
+fn gui_adopt_all_agent_skills_imports_from_all_enabled_global_agent_dirs() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let home = project_path(&temp_dir, "home");
+    let codex_global = home.join(".codex/skills");
+    let custom_global = home.join("custom-agent/skills");
+    let disabled_global = home.join("disabled-agent/skills");
+    write_skill(&codex_global.join("codex-one"), "# Codex one\n");
+    write_skill(&custom_global.join("custom-one"), "# Custom one\n");
+    write_skill(&custom_global.join("conflict"), "# Different source\n");
+    write_skill(&disabled_global.join("disabled-one"), "# Disabled one\n");
+    std::fs::create_dir_all(custom_global.join("not-a-skill")).unwrap();
+
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![
+                AgentConfig {
+                    id: AgentId::new("codex"),
+                    label: "Codex".to_string(),
+                    kind: AgentKind::BuiltIn,
+                    global_skill_dirs: vec![codex_global.clone()],
+                    project_skill_dirs: vec![".agents/skills".into()],
+                    enabled: true,
+                },
+                AgentConfig {
+                    id: AgentId::new("custom"),
+                    label: "Custom".to_string(),
+                    kind: AgentKind::Custom,
+                    global_skill_dirs: vec![custom_global.clone()],
+                    project_skill_dirs: vec![".custom/skills".into()],
+                    enabled: true,
+                },
+                AgentConfig {
+                    id: AgentId::new("disabled"),
+                    label: "Disabled".to_string(),
+                    kind: AgentKind::Custom,
+                    global_skill_dirs: vec![disabled_global.clone()],
+                    project_skill_dirs: vec![".disabled/skills".into()],
+                    enabled: false,
+                },
+            ],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+    let mut existing = managed_skill_with_name(&paths, "conflict");
+    write_skill(&existing.managed_path, "# Managed source\n");
+    existing.content_hash = hash_skill_dir(&existing.managed_path).unwrap();
+    write_skills_registry(
+        &paths,
+        &SkillsRegistry {
+            version: 1,
+            skills: vec![existing],
+        },
+    )
+    .unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    assert_eq!(
+        model.request_adopt_all_agent_skills(),
+        Some(GuiActionIntent::AdoptAllAgentSkills)
+    );
+    let controller = GuiController::new(paths.clone());
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+
+    let names: Vec<_> = model
+        .skills
+        .iter()
+        .map(|skill| skill.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["codex-one", "conflict", "custom-one"]);
+    assert!(model.skills.iter().any(|skill| matches!(
+        &skill.source,
+        SkillSource::GlobalAgentAdopt { agent_id, source_path }
+            if agent_id == &AgentId::new("codex") && source_path == &codex_global.join("codex-one")
+    )));
+    assert!(model.skills.iter().any(|skill| matches!(
+        &skill.source,
+        SkillSource::GlobalAgentAdopt { agent_id, source_path }
+            if agent_id == &AgentId::new("custom") && source_path == &custom_global.join("custom-one")
+    )));
+    assert!(!model
+        .skills
+        .iter()
+        .any(|skill| skill.name == "disabled-one"));
+    assert!(!model.skills.iter().any(|skill| skill.name == "not-a-skill"));
+    assert!(codex_global.join("codex-one/SKILL.md").exists());
+    assert!(custom_global.join("custom-one/SKILL.md").exists());
+    assert_eq!(
+        model.last_status().unwrap().message,
+        "Adopted Agent Skills into Global Inventory: 2 imported, 1 conflict."
+    );
+}
+
+#[test]
+fn gui_adopt_all_agent_skills_skips_enabled_agents_without_global_dirs() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![AgentConfig {
+                id: AgentId::new("custom"),
+                label: "Custom".to_string(),
+                kind: AgentKind::Custom,
+                global_skill_dirs: Vec::new(),
+                project_skill_dirs: vec![".custom/skills".into()],
+                enabled: true,
+            }],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.request_adopt_all_agent_skills().unwrap();
+    let controller = GuiController::new(paths);
+
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+    assert!(model.skills.is_empty());
+    assert_eq!(
+        model.last_status().unwrap().message,
+        "Adopted Agent Skills into Global Inventory: 0 imported, 0 conflicts."
+    );
+}
+
+#[test]
+fn gui_adopt_all_agent_skills_reloads_partial_imports_when_later_agent_fails() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let good_global = project_path(&temp_dir, "codex-global");
+    let bad_global = project_path(&temp_dir, "not-a-directory");
+    write_skill(&good_global.join("good-one"), "# Good one\n");
+    if let Some(parent) = bad_global.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(&bad_global, "not a directory").unwrap();
+
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![AgentConfig {
+                id: AgentId::new("codex"),
+                label: "Codex".to_string(),
+                kind: AgentKind::BuiltIn,
+                global_skill_dirs: vec![good_global.clone(), bad_global],
+                project_skill_dirs: vec![".agents/skills".into()],
+                enabled: true,
+            }],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.request_adopt_all_agent_skills().unwrap();
+    let controller = GuiController::new(paths);
+
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+    assert_eq!(
+        model
+            .skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["good-one"]
+    );
+    assert_eq!(model.last_status().unwrap().kind, GuiStatusKind::Error);
+    assert_eq!(
+        model.last_status().unwrap().message,
+        "Adopted Agent Skills into Global Inventory: 1 imported, 0 conflicts, 1 failure."
     );
 }
 
@@ -1093,13 +1284,17 @@ fn skills_and_project_controls_gate_actions_by_selection_and_state() {
 
     let mut model = GuiModel::load(&paths).unwrap();
     model.navigate(NavigationView::Skills);
-    assert_eq!(skill_actions(&model), vec![SkillAction::InstallLocal]);
+    assert_eq!(
+        skill_actions(&model),
+        vec![SkillAction::InstallLocal, SkillAction::AdoptAgentSkills]
+    );
     model.select_skill(SkillId::new("frontend-design-a1b2c3d4"));
     model.select_scope(GuiScope::Project(project.clone()));
     assert_eq!(
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
+            SkillAction::AdoptAgentSkills,
             SkillAction::Scan,
             SkillAction::Deploy,
             SkillAction::Uninstall
@@ -1175,6 +1370,7 @@ fn skills_deploy_action_requires_explicit_project_scope_and_enabled_agent() {
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
+            SkillAction::AdoptAgentSkills,
             SkillAction::Scan,
             SkillAction::Uninstall
         ]
@@ -1186,6 +1382,7 @@ fn skills_deploy_action_requires_explicit_project_scope_and_enabled_agent() {
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
+            SkillAction::AdoptAgentSkills,
             SkillAction::Scan,
             SkillAction::Deploy,
             SkillAction::Uninstall
@@ -1207,6 +1404,7 @@ fn skills_deploy_action_requires_explicit_project_scope_and_enabled_agent() {
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
+            SkillAction::AdoptAgentSkills,
             SkillAction::Scan,
             SkillAction::Uninstall
         ]

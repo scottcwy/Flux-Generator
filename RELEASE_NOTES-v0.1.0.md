@@ -12,7 +12,7 @@ Build environment: macOS 15.7.3 arm64, cargo 1.95.0, rustc 1.95.0
 - Global Skill inventory install, uninstall, list, status, scan, and doctor flows.
 - Project deploy, enable, disable, redeploy, overwrite, promote, remove, status, and onboarding adopt flows.
 - GUI Dashboard, Skills, Agents, and Projects views with scoped project management.
-- GUI local Skill install, global uninstall confirmation, project drift remove confirmation, explicit deploy target, discovered project Skill list, per-Skill project adopt, and background action execution.
+- GUI local Skill install, all-enabled-Agent global Skill adopt, global uninstall confirmation, project drift remove confirmation, explicit deploy target, discovered project Skill list, per-Skill project adopt, and background action execution.
 - Release smoke fixture covering install, project adopt, deploy, disabled, drift, outdated, missing managed source, and GUI-model acceptance states.
 
 ## Install

@@ -54,7 +54,7 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
             title: "Empty".to_string(),
             lines: vec![
                 "No managed Skills yet.".to_string(),
-                "Install a local Skill directory, or open Projects to adopt existing Agent Skills."
+                "Install a local Skill directory, or adopt Skills from enabled Agent directories."
                     .to_string(),
             ],
         }];
@@ -105,6 +105,8 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
             lines: vec![
                 "Scan runs the advisory security scanner for this managed Skill.".to_string(),
                 "Install copies a local Skill directory into Global Inventory. The source directory is not modified."
+                    .to_string(),
+                "Adopt Agent Skills scans enabled Agent directories and imports detected Skills without modifying sources."
                     .to_string(),
                 "Deploy copies this managed Skill to the selected project and Agent.".to_string(),
                 "Uninstall removes this Skill from Global Inventory. Project copies are not deleted."

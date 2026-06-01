@@ -1,6 +1,6 @@
 use skill_kits::core::agents::{
-    add_custom_agent_config, remove_custom_agent_config, reset_agent_project_skill_dirs,
-    update_agent_project_skill_dirs, AgentConfig, AgentKind,
+    add_custom_agent_config, configured_global_skill_dirs_for, remove_custom_agent_config,
+    reset_agent_project_skill_dirs, update_agent_project_skill_dirs, AgentConfig, AgentKind,
 };
 use skill_kits::core::config::{read_config, write_config, Config};
 use skill_kits::core::error::SkillKitsError;
@@ -338,6 +338,47 @@ fn update_agent_project_skill_dirs_updates_existing_agent_and_preserves_other_ag
         vec![camino::Utf8PathBuf::from(".agents/skills")]
     );
     assert_eq!(config.agents[1], updated);
+}
+
+#[test]
+fn configured_global_skill_dirs_uses_configured_custom_and_built_in_dirs() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![
+                AgentConfig {
+                    id: AgentId::new("codex"),
+                    label: "Codex".to_string(),
+                    kind: AgentKind::BuiltIn,
+                    global_skill_dirs: vec!["~/my-codex/skills".into()],
+                    project_skill_dirs: vec![".agents/skills".into()],
+                    enabled: true,
+                },
+                AgentConfig {
+                    id: AgentId::new("custom"),
+                    label: "Custom".to_string(),
+                    kind: AgentKind::Custom,
+                    global_skill_dirs: vec!["/tmp/custom-skills".into()],
+                    project_skill_dirs: vec![".custom/skills".into()],
+                    enabled: true,
+                },
+            ],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        configured_global_skill_dirs_for(&paths, &AgentId::new("codex")).unwrap(),
+        vec![camino::Utf8PathBuf::from("~/my-codex/skills")]
+    );
+    assert_eq!(
+        configured_global_skill_dirs_for(&paths, &AgentId::new("custom")).unwrap(),
+        vec![camino::Utf8PathBuf::from("/tmp/custom-skills")]
+    );
 }
 
 #[test]
