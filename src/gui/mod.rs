@@ -13,6 +13,7 @@ use state::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillAction {
+    InstallLocal,
     Scan,
     Deploy,
     Uninstall,
@@ -87,6 +88,7 @@ impl ProjectAction {
 impl SkillAction {
     fn label(self) -> &'static str {
         match self {
+            Self::InstallLocal => "Install local",
             Self::Scan => "Scan",
             Self::Deploy => "Deploy",
             Self::Uninstall => "Uninstall",
@@ -95,11 +97,12 @@ impl SkillAction {
 }
 
 pub fn skill_actions(model: &GuiModel) -> Vec<SkillAction> {
+    let mut actions = vec![SkillAction::InstallLocal];
     if model.selected_skill().is_none() {
-        return Vec::new();
+        return actions;
     }
 
-    let mut actions = vec![SkillAction::Scan];
+    actions.push(SkillAction::Scan);
     if model.has_explicit_project_deploy_target() {
         actions.push(SkillAction::Deploy);
     }
@@ -403,17 +406,7 @@ fn render_action_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiCol
 
     match model.active_view {
         NavigationView::Skills => {
-            ui.horizontal(|ui| {
-                for action in skill_actions(model) {
-                    render_skill_action_button(ui, model, colors, action);
-                }
-            });
-            if skill_actions(model).is_empty() {
-                ui.label(
-                    egui::RichText::new("Select a Skill to scan, deploy, or uninstall.")
-                        .color(colors.ink_subtle),
-                );
-            }
+            render_skill_controls(ui, model, colors);
         }
         NavigationView::Projects => {
             if model.pending_remove_confirmation().is_some() {
@@ -462,6 +455,9 @@ fn render_skill_action_button(
     }
 
     match action {
+        SkillAction::InstallLocal => {
+            model.begin_install_local_skill();
+        }
         SkillAction::Scan => {
             let _ = model.request_scan_selected_skill();
         }
@@ -472,6 +468,30 @@ fn render_skill_action_button(
             let _ = model.request_uninstall_selected_skill();
         }
     }
+}
+
+fn render_skill_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColors) {
+    if let Some(draft) = model.install_local_skill_draft().cloned() {
+        let mut path_text = draft.path_text;
+        ui.label(egui::RichText::new("Local Skill path").color(colors.ink_subtle));
+        ui.text_edit_singleline(&mut path_text);
+        model.update_install_local_skill_path(path_text);
+        ui.horizontal(|ui| {
+            if ui.button("Install").clicked() {
+                let _ = model.request_save_install_local_skill();
+            }
+            if ui.button("Cancel").clicked() {
+                model.cancel_install_local_skill();
+            }
+        });
+        return;
+    }
+
+    ui.horizontal(|ui| {
+        for action in skill_actions(model) {
+            render_skill_action_button(ui, model, colors, action);
+        }
+    });
 }
 
 fn render_agent_action_button(ui: &mut egui::Ui, model: &mut GuiModel, action: AgentAction) {

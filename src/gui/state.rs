@@ -3,7 +3,7 @@ use crate::core::{
     agents::{add_custom_agent_config, update_agent_project_skill_dirs, AgentConfig},
     config::{read_config, RecentProject},
     ids::{AgentId, SkillId},
-    install::{uninstall_skill, UninstallSkillRequest},
+    install::{install_local_skill, uninstall_skill, InstallLocalRequest, UninstallSkillRequest},
     onboarding::{project_onboarding_scan, DiscoveredProjectSkill, ProjectOnboardingScanRequest},
     paths::AppPaths,
     project::{
@@ -53,6 +53,9 @@ pub enum GuiScope {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GuiActionIntent {
+    InstallLocalSkill {
+        source_path: Utf8PathBuf,
+    },
     ScanSkill {
         skill_id: SkillId,
     },
@@ -120,6 +123,11 @@ pub struct GuiController {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GuiControllerOutcome {
     None,
+    SkillInstalled {
+        skill_id: SkillId,
+        scanned_hash: String,
+        findings: Vec<RiskFinding>,
+    },
     SkillScan {
         skill_id: SkillId,
         scanned_hash: String,
@@ -187,6 +195,19 @@ impl GuiController {
 
     pub fn execute(&self, intent: &GuiActionIntent) -> Result<GuiControllerOutcome> {
         let outcome = match intent {
+            GuiActionIntent::InstallLocalSkill { source_path } => {
+                let result = install_local_skill(
+                    InstallLocalRequest {
+                        source_path: source_path.as_path(),
+                    },
+                    &self.paths,
+                )?;
+                GuiControllerOutcome::SkillInstalled {
+                    skill_id: result.skill.id,
+                    scanned_hash: result.skill.content_hash,
+                    findings: result.risk_findings,
+                }
+            }
             GuiActionIntent::ScanSkill { skill_id } => {
                 let skill = read_skills_registry(&self.paths)?
                     .skills
@@ -485,6 +506,11 @@ pub struct AgentEditorDraft {
     pub project_dir_text: String,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InstallLocalSkillDraft {
+    pub path_text: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectDeployTarget {
     pub project_path: Utf8PathBuf,
@@ -515,6 +541,7 @@ pub struct GuiModel {
     last_status: Option<GuiStatus>,
     skill_risk_reports: Vec<(SkillId, GuiRiskReport)>,
     agent_editor_draft: Option<AgentEditorDraft>,
+    install_local_skill_draft: Option<InstallLocalSkillDraft>,
 }
 
 impl GuiModel {
@@ -583,6 +610,7 @@ impl GuiModel {
             last_status: None,
             skill_risk_reports: Vec::new(),
             agent_editor_draft: None,
+            install_local_skill_draft: None,
         })
     }
 
@@ -688,6 +716,30 @@ impl GuiModel {
     pub fn request_scan_selected_skill(&mut self) -> Option<GuiActionIntent> {
         let skill_id = self.selected_skill.clone()?;
         self.push_intent(GuiActionIntent::ScanSkill { skill_id })
+    }
+
+    pub fn begin_install_local_skill(&mut self) {
+        self.install_local_skill_draft = Some(InstallLocalSkillDraft::default());
+    }
+
+    pub fn update_install_local_skill_path(&mut self, value: String) {
+        if let Some(draft) = &mut self.install_local_skill_draft {
+            draft.path_text = value;
+        }
+    }
+
+    pub fn request_save_install_local_skill(&mut self) -> Option<GuiActionIntent> {
+        let source_path = self.install_local_skill_draft.as_ref()?.path_text.trim();
+        if source_path.is_empty() {
+            return None;
+        }
+        self.push_intent(GuiActionIntent::InstallLocalSkill {
+            source_path: source_path.into(),
+        })
+    }
+
+    pub fn cancel_install_local_skill(&mut self) {
+        self.install_local_skill_draft = None;
     }
 
     pub fn request_uninstall_selected_skill(&mut self) -> Option<GuiActionIntent> {
@@ -989,6 +1041,10 @@ impl GuiModel {
                 return Err(error);
             }
         };
+        let selected_skill_after_install = match &outcome {
+            GuiControllerOutcome::SkillInstalled { skill_id, .. } => Some(skill_id.clone()),
+            _ => None,
+        };
         let success_message = self.intent_success_message(&intent, &outcome);
         *self = Self::load(controller.paths())?;
         for (path, pending_conflicts, skipped_conflicts) in project_conflict_state {
@@ -1003,11 +1059,13 @@ impl GuiModel {
         }
         self.active_view = active_view;
         self.active_scope = active_scope;
-        self.selected_skill = selected_skill.filter(|selected| {
-            self.skills
-                .iter()
-                .any(|skill| skill.id.as_str() == selected.as_str())
-        });
+        self.selected_skill = selected_skill_after_install
+            .or(selected_skill)
+            .filter(|selected| {
+                self.skills
+                    .iter()
+                    .any(|skill| skill.id.as_str() == selected.as_str())
+            });
         self.selected_agent = selected_agent_after_save
             .or(selected_agent)
             .filter(|selected| {
@@ -1039,6 +1097,7 @@ impl GuiModel {
             })
             .collect();
         self.agent_editor_draft = None;
+        self.install_local_skill_draft = None;
         self.last_status = Some(GuiStatus {
             kind: GuiStatusKind::Success,
             message: success_message,
@@ -1053,6 +1112,18 @@ impl GuiModel {
         outcome: &GuiControllerOutcome,
     ) -> String {
         match intent {
+            GuiActionIntent::InstallLocalSkill { source_path } => {
+                let skill_name = source_path.file_name().unwrap_or("skill");
+                let summary = match outcome {
+                    GuiControllerOutcome::SkillInstalled { findings, .. } => GuiRiskReport {
+                        scanned_hash: String::new(),
+                        findings: findings.clone(),
+                    }
+                    .summary_label(),
+                    _ => "No findings".to_string(),
+                };
+                format!("Installed {skill_name}: {summary}.")
+            }
             GuiActionIntent::ScanSkill { skill_id } => {
                 let skill_name = self
                     .skills
@@ -1212,7 +1283,12 @@ impl GuiModel {
     fn apply_controller_outcome(&mut self, outcome: GuiControllerOutcome) {
         match outcome {
             GuiControllerOutcome::None => {}
-            GuiControllerOutcome::SkillScan {
+            GuiControllerOutcome::SkillInstalled {
+                skill_id,
+                scanned_hash,
+                findings,
+            }
+            | GuiControllerOutcome::SkillScan {
                 skill_id,
                 scanned_hash,
                 findings,
@@ -1314,6 +1390,10 @@ impl GuiModel {
         self.agent_editor_draft.as_ref()
     }
 
+    pub fn install_local_skill_draft(&self) -> Option<&InstallLocalSkillDraft> {
+        self.install_local_skill_draft.as_ref()
+    }
+
     pub fn selected_project_summary(&self) -> Option<&ProjectSummary> {
         self.selected_project.as_ref().and_then(|selected| {
             self.project_summaries
@@ -1378,12 +1458,14 @@ impl Default for GuiModel {
             last_status: None,
             skill_risk_reports: Vec::new(),
             agent_editor_draft: None,
+            install_local_skill_draft: None,
         }
     }
 }
 
 fn action_label(intent: &GuiActionIntent) -> &'static str {
     match intent {
+        GuiActionIntent::InstallLocalSkill { .. } => "Install local Skill",
         GuiActionIntent::ScanSkill { .. } => "Scan",
         GuiActionIntent::UninstallSkill { .. } => "Uninstall",
         GuiActionIntent::DeploySkill { .. } => "Deploy",
