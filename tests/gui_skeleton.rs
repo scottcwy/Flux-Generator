@@ -2958,6 +2958,95 @@ fn projects_controls_limit_actions_for_missing_managed_source_deployments() {
 }
 
 #[test]
+fn projects_inspector_shows_repair_guidance_for_invalid_toggle_deployments() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let project = project_path(&temp_dir, "sample-app");
+    std::fs::create_dir_all(&project).unwrap();
+    ensure_app_dirs(&paths).unwrap();
+
+    let skill = managed_skill(&paths);
+    write_skill(&skill.managed_path, "# Frontend Design\n");
+    write_skills_registry(
+        &paths,
+        &SkillsRegistry {
+            version: 1,
+            skills: vec![skill],
+        },
+    )
+    .unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    write_config_with_codex_project(&paths, &project);
+
+    deploy_project_skill(ProjectDeployRequest {
+        app_paths: &paths,
+        project_path: &project,
+        agent_id: &AgentId::new("codex"),
+        skill_query: "frontend-design",
+    })
+    .unwrap();
+    std::fs::write(
+        project.join(".agents/skills/frontend-design/SKILL.md.disabled"),
+        "# Disabled too\n",
+    )
+    .unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.navigate(NavigationView::Projects);
+    model.select_deployment(model.deployments[0].id.clone());
+
+    let actions = section_lines(&model, "Actions");
+    assert_eq!(
+        actions,
+        vec![
+            "Invalid toggle state blocks deployment actions.".to_string(),
+            "Keep exactly one of SKILL.md or SKILL.md.disabled, then Refresh.".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn projects_controls_block_actions_for_invalid_toggle_deployments() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let project = project_path(&temp_dir, "sample-app");
+    std::fs::create_dir_all(&project).unwrap();
+    ensure_app_dirs(&paths).unwrap();
+
+    let skill = managed_skill(&paths);
+    write_skill(&skill.managed_path, "# Frontend Design\n");
+    write_skills_registry(
+        &paths,
+        &SkillsRegistry {
+            version: 1,
+            skills: vec![skill],
+        },
+    )
+    .unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    write_config_with_codex_project(&paths, &project);
+
+    deploy_project_skill(ProjectDeployRequest {
+        app_paths: &paths,
+        project_path: &project,
+        agent_id: &AgentId::new("codex"),
+        skill_query: "frontend-design",
+    })
+    .unwrap();
+    std::fs::write(
+        project.join(".agents/skills/frontend-design/SKILL.md.disabled"),
+        "# Disabled too\n",
+    )
+    .unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.navigate(NavigationView::Projects);
+    model.select_deployment(model.deployments[0].id.clone());
+
+    assert_eq!(project_actions(&model), Vec::<ProjectAction>::new());
+}
+
+#[test]
 fn projects_controls_keep_normal_deployment_actions() {
     let temp_dir = TempDir::new().unwrap();
     let paths = test_paths(&temp_dir);

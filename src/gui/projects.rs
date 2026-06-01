@@ -165,6 +165,13 @@ fn deploy_target_lines(model: &GuiModel) -> Vec<String> {
 }
 
 fn action_lines(status: &DeploymentStatus) -> Vec<String> {
+    if is_invalid_toggle(status) {
+        return vec![
+            "Invalid toggle state blocks deployment actions.".to_string(),
+            "Keep exactly one of SKILL.md or SKILL.md.disabled, then Refresh.".to_string(),
+        ];
+    }
+
     if status.missing_managed_source {
         return vec!["Available actions: Promote to managed, Remove from project.".to_string()];
     }
@@ -175,6 +182,13 @@ fn action_lines(status: &DeploymentStatus) -> Vec<String> {
             .to_string(),
         "Remove deletes only this deployed Skill, not the Agent skill root.".to_string(),
     ]
+}
+
+pub fn is_invalid_toggle(status: &DeploymentStatus) -> bool {
+    matches!(
+        status.toggle,
+        ToggleState::InvalidBothPresent | ToggleState::InvalidBothMissing
+    )
 }
 
 fn toggle_label(toggle: &ToggleState) -> String {

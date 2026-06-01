@@ -171,6 +171,13 @@ pub fn project_actions(model: &GuiModel) -> Vec<ProjectAction> {
 
     if model
         .selected_deployment_status()
+        .is_some_and(crate::gui::projects::is_invalid_toggle)
+    {
+        return Vec::new();
+    }
+
+    if model
+        .selected_deployment_status()
         .is_some_and(|status| status.missing_managed_source)
     {
         ProjectAction::MISSING_MANAGED_SOURCE.to_vec()
