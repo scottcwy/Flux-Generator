@@ -1,8 +1,11 @@
 use crate::core::{
-    agent_space::{SkillInstance, SkillInstanceScope, SkillInstanceSourceKind},
-    registry::ToggleState,
+    agent_space::{SkillInstance, SkillInstanceSourceKind},
+    registry::{DeploymentStatus, ToggleState},
 };
-use crate::gui::state::{GuiModel, InspectorSection, RenderRow, RenderableView};
+use crate::gui::state::{
+    skill_instance_scope_label, skill_instance_source_label, skill_instance_status_label, GuiModel,
+    InspectorSection, RenderRow, RenderableView,
+};
 
 pub fn view_name() -> &'static str {
     "Skills"
@@ -12,14 +15,17 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
     let main_rows = model
         .skill_instances
         .iter()
+        .filter(|instance| matches_agent_filter(model, instance))
+        .filter(|instance| matches_scope_filter(model, instance))
+        .filter(|instance| matches_status_filter(model, instance))
         .map(|instance| RenderRow {
             id: instance.id.clone(),
             cells: vec![
                 instance.name.clone(),
                 agent_label(model, instance),
-                scope_label(&instance.scope),
-                status_label(instance),
-                source_label(model, instance),
+                skill_instance_scope_label(&instance.scope),
+                skill_instance_status_label(instance).to_string(),
+                skill_instance_source_label(model, instance),
                 if instance.managed {
                     "Managed".to_string()
                 } else {
@@ -75,9 +81,9 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
                 instance.name.clone(),
                 format!("Instance ID {}", instance.id),
                 format!("Agent {}", agent_label(model, instance)),
-                format!("Scope {}", scope_label(&instance.scope)),
-                format!("Status {}", status_label(instance)),
-                format!("Source {}", source_label(model, instance)),
+                format!("Scope {}", skill_instance_scope_label(&instance.scope)),
+                format!("Status {}", skill_instance_status_label(instance)),
+                format!("Source {}", skill_instance_source_label(model, instance)),
                 format!("Managed {}", if instance.managed { "Yes" } else { "No" }),
                 format!("Writable {}", if instance.writable { "Yes" } else { "No" }),
             ],
@@ -97,6 +103,18 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
         InspectorSection {
             title: "Registry Metadata".to_string(),
             lines: registry_metadata_lines(instance),
+        },
+        InspectorSection {
+            title: "State".to_string(),
+            lines: state_lines(instance),
+        },
+        InspectorSection {
+            title: "Risk Findings".to_string(),
+            lines: risk_lines(model, instance),
+        },
+        InspectorSection {
+            title: "Project Deployments".to_string(),
+            lines: project_deployment_lines(model, instance),
         },
         InspectorSection {
             title: "Actions".to_string(),
@@ -141,6 +159,94 @@ fn registry_metadata_lines(instance: &SkillInstance) -> Vec<String> {
     lines
 }
 
+fn state_lines(instance: &SkillInstance) -> Vec<String> {
+    let mut lines = Vec::new();
+    match instance.toggle_state {
+        ToggleState::InvalidBothPresent => {
+            lines.push("Invalid: both SKILL.md and SKILL.md.disabled are present.".to_string());
+        }
+        ToggleState::InvalidBothMissing => {
+            lines.push("Missing: neither SKILL.md nor SKILL.md.disabled is present.".to_string());
+        }
+        ToggleState::Enabled | ToggleState::Disabled => {
+            if !instance.writable
+                && matches!(
+                    instance.source_kind,
+                    SkillInstanceSourceKind::PluginCache | SkillInstanceSourceKind::Vendor
+                )
+            {
+                lines.push(
+                    "Read-only: plugin/cache/vendor sources cannot be toggled here.".to_string(),
+                );
+            } else if !instance.writable {
+                lines.push("Read-only: this Skill directory is not writable.".to_string());
+            }
+        }
+    }
+    lines
+}
+
+fn risk_lines(model: &GuiModel, instance: &SkillInstance) -> Vec<String> {
+    let Some(stable_id) = &instance.stable_id else {
+        return Vec::new();
+    };
+    let Some(report) = model.skill_risk_report(stable_id) else {
+        return Vec::new();
+    };
+
+    let mut lines = vec![format!("{}.", report.summary_label())];
+    lines.extend(report.findings.iter().map(|finding| {
+        format!(
+            "{} line {} - {}",
+            finding.rule_id,
+            finding
+                .line
+                .map(|line| line.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            finding.message
+        )
+    }));
+    lines
+}
+
+fn project_deployment_lines(model: &GuiModel, instance: &SkillInstance) -> Vec<String> {
+    let Some(stable_id) = &instance.stable_id else {
+        return Vec::new();
+    };
+    model
+        .deployment_statuses
+        .iter()
+        .filter(|status| status.record.skill_id == *stable_id)
+        .map(|status| {
+            format!(
+                "{} | {} | {} | {}",
+                status.record.project_name,
+                status.record.agent_id,
+                deployment_status_label(status),
+                status.record.deployment_path
+            )
+        })
+        .collect()
+}
+
+fn deployment_status_label(status: &DeploymentStatus) -> String {
+    if status.missing_managed_source {
+        return "Missing managed source".to_string();
+    }
+    if status.outdated {
+        return "Outdated".to_string();
+    }
+    if status.drift {
+        return "Drift".to_string();
+    }
+
+    match status.toggle {
+        ToggleState::Enabled => "Enabled".to_string(),
+        ToggleState::Disabled => "Disabled".to_string(),
+        ToggleState::InvalidBothPresent | ToggleState::InvalidBothMissing => "Invalid".to_string(),
+    }
+}
+
 fn agent_label(model: &GuiModel, instance: &SkillInstance) -> String {
     model
         .agents
@@ -150,38 +256,20 @@ fn agent_label(model: &GuiModel, instance: &SkillInstance) -> String {
         .unwrap_or_else(|| instance.agent_id.to_string())
 }
 
-fn scope_label(scope: &SkillInstanceScope) -> String {
-    match scope {
-        SkillInstanceScope::Global => "Global".to_string(),
-        SkillInstanceScope::Project { name, .. } => format!("Project / {name}"),
-    }
+fn matches_agent_filter(model: &GuiModel, instance: &SkillInstance) -> bool {
+    model
+        .skill_agent_filter()
+        .map_or(true, |agent_id| instance.agent_id == *agent_id)
 }
 
-fn status_label(instance: &SkillInstance) -> String {
-    if !instance.writable
-        && matches!(
-            instance.toggle_state,
-            ToggleState::Enabled | ToggleState::Disabled
-        )
-    {
-        return "Read-only".to_string();
-    }
-    match instance.toggle_state {
-        ToggleState::Enabled => "Enabled".to_string(),
-        ToggleState::Disabled => "Disabled".to_string(),
-        ToggleState::InvalidBothPresent => "Invalid".to_string(),
-        ToggleState::InvalidBothMissing => "Missing".to_string(),
-    }
+fn matches_scope_filter(model: &GuiModel, instance: &SkillInstance) -> bool {
+    model.skill_scope_filter().map_or(true, |scope| {
+        skill_instance_scope_label(&instance.scope) == scope
+    })
 }
 
-fn source_label(model: &GuiModel, instance: &SkillInstance) -> String {
-    match &instance.source_kind {
-        SkillInstanceSourceKind::AgentSpace => {
-            format!("{} global", agent_label(model, instance))
-        }
-        SkillInstanceSourceKind::ProjectDeployment => "Project".to_string(),
-        SkillInstanceSourceKind::PluginCache => "Plugin cache".to_string(),
-        SkillInstanceSourceKind::Vendor => "Vendor".to_string(),
-        SkillInstanceSourceKind::ManagedInventory => "Managed inventory".to_string(),
-    }
+fn matches_status_filter(model: &GuiModel, instance: &SkillInstance) -> bool {
+    model.skill_status_filter().map_or(true, |status| {
+        skill_instance_status_label(instance) == status
+    })
 }

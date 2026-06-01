@@ -1,11 +1,12 @@
 use crate::core::{
     adopt::{
-        global_agent_adopt_resilient, project_adopt, project_adopt_all,
-        project_adopt_conflict_as_new, GlobalAgentAdoptRequest, ProjectAdoptRequest,
+        global_agent_adopt_resilient, import_managed_copy, project_adopt, project_adopt_all,
+        project_adopt_conflict_as_new, GlobalAgentAdoptRequest, ImportManagedCopyRequest,
+        ProjectAdoptRequest,
     },
     agent_space::{
         disable_skill_instance, enable_skill_instance, scan_agent_spaces, SkillInstance,
-        SkillInstanceRequest,
+        SkillInstanceRequest, SkillInstanceScope, SkillInstanceSourceKind,
     },
     agents::{
         add_custom_agent_config, remove_custom_agent_config, reset_agent_project_skill_dirs,
@@ -40,6 +41,8 @@ pub const DRIFT_REMOVE_CONFIRMATION_MESSAGE: &str =
     "This project copy has local changes. Removing it deletes only this deployed Skill, not the Agent skill root.";
 pub const GLOBAL_UNINSTALL_CONFIRMATION_MESSAGE: &str =
     "Uninstall removes this Skill from Global Inventory. Source files and project deployments are not deleted.";
+pub const SKILL_INSTANCE_DISABLE_CONFIRMATION_MESSAGE: &str =
+    "Disable changes SKILL.md to SKILL.md.disabled in the Agent Space. It does not delete the Skill directory.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NavigationView {
@@ -74,6 +77,9 @@ pub enum GuiActionIntent {
         source_path: Utf8PathBuf,
     },
     AdoptAllAgentSkills,
+    ImportManagedCopy {
+        instance_id: String,
+    },
     ScanSkill {
         skill_id: SkillId,
     },
@@ -336,6 +342,26 @@ impl GuiController {
                     imported,
                     conflicts,
                     failures,
+                }
+            }
+            GuiActionIntent::ImportManagedCopy { instance_id } => {
+                let home = self.home_dir.clone().map_or_else(default_home_dir, Ok)?;
+                let instance = scan_agent_spaces(&self.paths, &home)?
+                    .into_iter()
+                    .find(|instance| instance.id == *instance_id)
+                    .ok_or_else(|| SkillKitsError::SkillNotFound {
+                        query: instance_id.clone(),
+                    })?;
+                let skill = import_managed_copy(ImportManagedCopyRequest {
+                    app_paths: &self.paths,
+                    agent_id: &instance.agent_id,
+                    source_path: &instance.skill_dir,
+                })?;
+                let findings = scan_skill_dir(&skill.managed_path)?;
+                GuiControllerOutcome::SkillInstalled {
+                    skill_id: skill.id,
+                    scanned_hash: skill.content_hash,
+                    findings,
                 }
             }
             GuiActionIntent::ScanSkill { skill_id } => {
@@ -762,7 +788,11 @@ pub struct GuiModel {
     selected_deployment: Option<String>,
     selected_discovered_project_skill: Option<ProjectConflict>,
     pending_uninstall_confirmation: Option<SkillId>,
+    pending_disable_skill_instance_confirmation: Option<String>,
     pending_remove_confirmation: Option<String>,
+    skill_agent_filter: Option<AgentId>,
+    skill_scope_filter: Option<String>,
+    skill_status_filter: Option<String>,
     pending_intents: Vec<GuiActionIntent>,
     last_status: Option<GuiStatus>,
     skill_risk_reports: Vec<(SkillId, GuiRiskReport)>,
@@ -877,7 +907,11 @@ impl GuiModel {
             selected_deployment: None,
             selected_discovered_project_skill: None,
             pending_uninstall_confirmation: None,
+            pending_disable_skill_instance_confirmation: None,
             pending_remove_confirmation: None,
+            skill_agent_filter: None,
+            skill_scope_filter: None,
+            skill_status_filter: None,
             pending_intents: Vec::new(),
             last_status: None,
             skill_risk_reports: Vec::new(),
@@ -1047,10 +1081,86 @@ impl GuiModel {
             .map(|_| GLOBAL_UNINSTALL_CONFIRMATION_MESSAGE)
     }
 
+    pub fn pending_disable_skill_instance_confirmation(&self) -> Option<&str> {
+        self.pending_disable_skill_instance_confirmation.as_deref()
+    }
+
+    pub fn pending_disable_skill_instance_confirmation_message(&self) -> Option<&'static str> {
+        self.pending_disable_skill_instance_confirmation
+            .as_ref()
+            .map(|_| SKILL_INSTANCE_DISABLE_CONFIRMATION_MESSAGE)
+    }
+
     pub fn pending_remove_confirmation_message(&self) -> Option<&'static str> {
         self.pending_remove_confirmation
             .as_ref()
             .map(|_| DRIFT_REMOVE_CONFIRMATION_MESSAGE)
+    }
+
+    pub fn set_skill_agent_filter(&mut self, agent_id: Option<AgentId>) {
+        self.skill_agent_filter = agent_id;
+    }
+
+    pub fn skill_agent_filter(&self) -> Option<&AgentId> {
+        self.skill_agent_filter.as_ref()
+    }
+
+    pub fn set_skill_scope_filter(&mut self, scope: Option<String>) {
+        self.skill_scope_filter = scope;
+    }
+
+    pub fn skill_scope_filter(&self) -> Option<&str> {
+        self.skill_scope_filter.as_deref()
+    }
+
+    pub fn set_skill_status_filter(&mut self, status: Option<String>) {
+        self.skill_status_filter = status;
+    }
+
+    pub fn skill_status_filter(&self) -> Option<&str> {
+        self.skill_status_filter.as_deref()
+    }
+
+    pub fn skill_agent_filter_options(&self) -> Vec<(AgentId, String)> {
+        let mut options = self
+            .skill_instances
+            .iter()
+            .map(|instance| {
+                let label = self
+                    .agents
+                    .iter()
+                    .find(|agent| agent.id == instance.agent_id)
+                    .map(|agent| agent.label.clone())
+                    .unwrap_or_else(|| instance.agent_id.to_string());
+                (instance.agent_id.clone(), label)
+            })
+            .collect::<Vec<_>>();
+        options.sort_by(|left, right| left.1.cmp(&right.1).then(left.0.cmp(&right.0)));
+        options.dedup_by(|left, right| left.0 == right.0);
+        options
+    }
+
+    pub fn skill_scope_filter_options(&self) -> Vec<String> {
+        let mut options = self
+            .skill_instances
+            .iter()
+            .map(|instance| skill_instance_scope_filter_label(&instance.scope))
+            .collect::<Vec<_>>();
+        options.sort();
+        options.dedup();
+        options
+    }
+
+    pub fn skill_status_filter_options(&self) -> Vec<&'static str> {
+        const ORDER: [&str; 5] = ["Enabled", "Disabled", "Invalid", "Missing", "Read-only"];
+        ORDER
+            .into_iter()
+            .filter(|status| {
+                self.skill_instances
+                    .iter()
+                    .any(|instance| skill_instance_status_label(instance) == *status)
+            })
+            .collect()
     }
 
     pub fn request_scan_selected_skill(&mut self) -> Option<GuiActionIntent> {
@@ -1080,6 +1190,30 @@ impl GuiModel {
 
     pub fn request_adopt_all_agent_skills(&mut self) -> Option<GuiActionIntent> {
         self.push_intent(GuiActionIntent::AdoptAllAgentSkills)
+    }
+
+    pub fn request_import_selected_skill_instance_as_managed_copy(
+        &mut self,
+    ) -> Option<GuiActionIntent> {
+        let instance = self.selected_skill_instance()?.clone();
+        if !matches!(
+            instance.source_kind,
+            SkillInstanceSourceKind::AgentSpace | SkillInstanceSourceKind::ProjectDeployment
+        ) {
+            return None;
+        }
+        if instance.stable_id.is_some() {
+            return None;
+        }
+        if matches!(
+            instance.toggle_state,
+            ToggleState::InvalidBothPresent | ToggleState::InvalidBothMissing
+        ) {
+            return None;
+        }
+        self.push_intent(GuiActionIntent::ImportManagedCopy {
+            instance_id: instance.id,
+        })
     }
 
     pub fn cancel_install_local_skill(&mut self) {
@@ -1372,13 +1506,31 @@ impl GuiModel {
     }
 
     pub fn request_disable_selected_skill_instance(&mut self) -> Option<GuiActionIntent> {
+        self.request_disable_selected_skill_instance_with_confirmation(true)
+    }
+
+    pub fn request_disable_selected_skill_instance_with_confirmation(
+        &mut self,
+        confirmed: bool,
+    ) -> Option<GuiActionIntent> {
         let instance = self.selected_skill_instance()?.clone();
         if !instance.writable || instance.toggle_state != ToggleState::Enabled {
             return None;
         }
+        if !confirmed {
+            self.pending_disable_skill_instance_confirmation = Some(instance.id);
+            return None;
+        }
+        self.pending_disable_skill_instance_confirmation = None;
         self.push_intent(GuiActionIntent::DisableSkillInstance {
             instance_id: instance.id,
         })
+    }
+
+    pub fn confirm_pending_disable_skill_instance(&mut self) -> Option<GuiActionIntent> {
+        let instance_id = self.pending_disable_skill_instance_confirmation.clone()?;
+        self.selected_skill_instance = Some(instance_id);
+        self.request_disable_selected_skill_instance_with_confirmation(true)
     }
 
     pub fn request_remove_selected_deployment(&mut self, force: bool) -> Option<GuiActionIntent> {
@@ -1449,7 +1601,12 @@ impl GuiModel {
         let selected_deployment = self.selected_deployment.clone();
         let selected_discovered_project_skill = self.selected_discovered_project_skill.clone();
         let pending_uninstall_confirmation = self.pending_uninstall_confirmation.clone();
+        let pending_disable_skill_instance_confirmation =
+            self.pending_disable_skill_instance_confirmation.clone();
         let pending_remove_confirmation = self.pending_remove_confirmation.clone();
+        let skill_agent_filter = self.skill_agent_filter.clone();
+        let skill_scope_filter = self.skill_scope_filter.clone();
+        let skill_status_filter = self.skill_status_filter.clone();
         let pending_intents = self.pending_intents.clone();
         let skill_risk_reports = self.skill_risk_reports.clone();
         let selected_agent_after_save = match &intent {
@@ -1541,11 +1698,20 @@ impl GuiModel {
             });
         self.pending_uninstall_confirmation = pending_uninstall_confirmation
             .filter(|pending| self.skills.iter().any(|skill| skill.id == *pending));
+        self.pending_disable_skill_instance_confirmation =
+            pending_disable_skill_instance_confirmation.filter(|pending| {
+                self.skill_instances
+                    .iter()
+                    .any(|instance| instance.id == *pending)
+            });
         self.pending_remove_confirmation = pending_remove_confirmation.filter(|pending| {
             self.deployments
                 .iter()
                 .any(|deployment| deployment.id == *pending)
         });
+        self.skill_agent_filter = skill_agent_filter;
+        self.skill_scope_filter = skill_scope_filter;
+        self.skill_status_filter = skill_status_filter;
         self.pending_intents = pending_intents;
         self.skill_risk_reports = skill_risk_reports
             .into_iter()
@@ -1620,6 +1786,15 @@ impl GuiModel {
                 }
                 _ => "Adopted Agent Skills into Global Inventory.".to_string(),
             },
+            GuiActionIntent::ImportManagedCopy { instance_id } => {
+                let skill_name = self
+                    .skill_instances
+                    .iter()
+                    .find(|instance| instance.id == *instance_id)
+                    .map(|instance| instance.name.as_str())
+                    .unwrap_or(instance_id);
+                format!("Imported {skill_name} into Managed Inventory.")
+            }
             GuiActionIntent::ScanSkill { skill_id } => {
                 let skill_name = self
                     .skills
@@ -2057,7 +2232,11 @@ impl Default for GuiModel {
             selected_project: None,
             selected_deployment: None,
             pending_uninstall_confirmation: None,
+            pending_disable_skill_instance_confirmation: None,
             pending_remove_confirmation: None,
+            skill_agent_filter: None,
+            skill_scope_filter: None,
+            skill_status_filter: None,
             selected_discovered_project_skill: None,
             pending_intents: Vec::new(),
             last_status: None,
@@ -2072,7 +2251,8 @@ impl Default for GuiModel {
 fn action_label(intent: &GuiActionIntent) -> &'static str {
     match intent {
         GuiActionIntent::InstallLocalSkill { .. } => "Install local Skill",
-        GuiActionIntent::AdoptAllAgentSkills => "Adopt Agent Skills",
+        GuiActionIntent::AdoptAllAgentSkills => "Scan Agent Spaces",
+        GuiActionIntent::ImportManagedCopy { .. } => "Import managed copy",
         GuiActionIntent::ScanSkill { .. } => "Scan",
         GuiActionIntent::UninstallSkill { .. } => "Uninstall",
         GuiActionIntent::DeploySkill { .. } => "Deploy",
@@ -2191,5 +2371,45 @@ pub fn skill_source_label(source: &SkillSource) -> String {
             format!("Project adopt / {agent_id}")
         }
         SkillSource::PromotedFromProject { .. } => "Promoted".to_string(),
+    }
+}
+
+pub fn skill_instance_scope_label(scope: &SkillInstanceScope) -> String {
+    match scope {
+        SkillInstanceScope::Global => "Global".to_string(),
+        SkillInstanceScope::Project { name, .. } => format!("Project / {name}"),
+    }
+}
+
+pub fn skill_instance_scope_filter_label(scope: &SkillInstanceScope) -> String {
+    skill_instance_scope_label(scope)
+}
+
+pub fn skill_instance_status_label(instance: &SkillInstance) -> &'static str {
+    if !instance.writable
+        && matches!(
+            instance.toggle_state,
+            ToggleState::Enabled | ToggleState::Disabled
+        )
+    {
+        return "Read-only";
+    }
+    match instance.toggle_state {
+        ToggleState::Enabled => "Enabled",
+        ToggleState::Disabled => "Disabled",
+        ToggleState::InvalidBothPresent => "Invalid",
+        ToggleState::InvalidBothMissing => "Missing",
+    }
+}
+
+pub fn skill_instance_source_label(model: &GuiModel, instance: &SkillInstance) -> String {
+    match &instance.source_kind {
+        SkillInstanceSourceKind::AgentSpace => {
+            format!("{} global", model.agent_label(&instance.agent_id))
+        }
+        SkillInstanceSourceKind::ProjectDeployment => "Project".to_string(),
+        SkillInstanceSourceKind::PluginCache => "Plugin cache".to_string(),
+        SkillInstanceSourceKind::Vendor => "Vendor".to_string(),
+        SkillInstanceSourceKind::ManagedInventory => "Managed inventory".to_string(),
     }
 }

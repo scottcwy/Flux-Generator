@@ -22,6 +22,13 @@ pub struct GlobalAgentAdoptRequest<'a> {
 }
 
 #[derive(Clone, Debug)]
+pub struct ImportManagedCopyRequest<'a> {
+    pub app_paths: &'a AppPaths,
+    pub agent_id: &'a AgentId,
+    pub source_path: &'a Utf8Path,
+}
+
+#[derive(Clone, Debug)]
 pub struct ProjectAdoptRequest<'a> {
     pub app_paths: &'a AppPaths,
     pub project_path: &'a Utf8Path,
@@ -78,6 +85,40 @@ pub fn global_agent_adopt(request: GlobalAgentAdoptRequest<'_>) -> Result<AdoptR
         imported,
         conflicts,
     })
+}
+
+pub fn import_managed_copy(request: ImportManagedCopyRequest<'_>) -> Result<ManagedSkill> {
+    let skill_name = request
+        .source_path
+        .file_name()
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "skill".to_string());
+    match adopt_global_skill(
+        &GlobalAgentAdoptRequest {
+            app_paths: request.app_paths,
+            agent_id: request.agent_id,
+            home_dir: Utf8Path::new(""),
+        },
+        request.source_path,
+    )? {
+        GlobalAdoptOutcome::Imported | GlobalAdoptOutcome::Skipped => {
+            let skills = read_skills_registry(request.app_paths)?.skills;
+            let source_match = skills.iter().position(|skill| {
+                skill.name == skill_name
+                    && matches!(
+                        &skill.source,
+                        SkillSource::GlobalAgentAdopt { source_path, .. }
+                            if source_path == request.source_path
+                    )
+            });
+            let name_match = skills.iter().position(|skill| skill.name == skill_name);
+            source_match
+                .or(name_match)
+                .map(|index| skills[index].clone())
+                .ok_or(SkillKitsError::SkillNotFound { query: skill_name })
+        }
+        GlobalAdoptOutcome::Conflict => Err(SkillKitsError::AdoptionConflict { name: skill_name }),
+    }
 }
 
 pub fn global_agent_adopt_resilient(

@@ -10,7 +10,7 @@ use eframe::egui;
 use state::{
     AgentEditorMode, GuiController, GuiModel, GuiScope, GuiStatusKind, NavigationView,
     RenderableView, UiColors, DRIFT_REMOVE_CONFIRMATION_MESSAGE,
-    GLOBAL_UNINSTALL_CONFIRMATION_MESSAGE,
+    GLOBAL_UNINSTALL_CONFIRMATION_MESSAGE, SKILL_INSTANCE_DISABLE_CONFIRMATION_MESSAGE,
 };
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -18,7 +18,8 @@ use std::thread;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillAction {
     InstallLocal,
-    AdoptAgentSkills,
+    ScanAgentSpaces,
+    ImportManagedCopy,
     Enable,
     Disable,
     Scan,
@@ -102,7 +103,8 @@ impl SkillAction {
     fn label(self) -> &'static str {
         match self {
             Self::InstallLocal => "Install local",
-            Self::AdoptAgentSkills => "Adopt Agent Skills",
+            Self::ScanAgentSpaces => "Scan Agent Spaces",
+            Self::ImportManagedCopy => "Import managed copy",
             Self::Enable => "Enable",
             Self::Disable => "Disable",
             Self::Scan => "Scan",
@@ -113,7 +115,7 @@ impl SkillAction {
 }
 
 pub fn skill_actions(model: &GuiModel) -> Vec<SkillAction> {
-    let mut actions = vec![SkillAction::InstallLocal, SkillAction::AdoptAgentSkills];
+    let mut actions = vec![SkillAction::InstallLocal, SkillAction::ScanAgentSpaces];
     if model.selected_skill().is_none() && model.selected_skill_instance().is_none() {
         return actions;
     }
@@ -126,6 +128,19 @@ pub fn skill_actions(model: &GuiModel) -> Vec<SkillAction> {
         actions.push(SkillAction::Uninstall);
     }
     if let Some(instance) = model.selected_skill_instance() {
+        if instance.stable_id.is_none()
+            && matches!(
+                instance.source_kind,
+                crate::core::agent_space::SkillInstanceSourceKind::AgentSpace
+                    | crate::core::agent_space::SkillInstanceSourceKind::ProjectDeployment
+            )
+            && matches!(
+                instance.toggle_state,
+                ToggleState::Enabled | ToggleState::Disabled
+            )
+        {
+            actions.push(SkillAction::ImportManagedCopy);
+        }
         if instance.writable {
             match instance.toggle_state {
                 ToggleState::Enabled => actions.push(SkillAction::Disable),
@@ -469,6 +484,10 @@ fn render_main(
     ui.add_space(8.0);
     ui.separator();
     ui.add_space(4.0);
+    if matches!(renderable.view, NavigationView::Skills) {
+        render_skill_filters(ui, model, colors);
+        ui.add_space(8.0);
+    }
 
     egui::Grid::new("main_table")
         .striped(false)
@@ -507,6 +526,88 @@ fn render_main(
                 .color(colors.ink_subtle),
         );
     }
+}
+
+fn render_skill_filters(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColors) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Agent").color(colors.ink_subtle));
+        let agent_text = model
+            .skill_agent_filter()
+            .and_then(|selected| {
+                model
+                    .skill_agent_filter_options()
+                    .into_iter()
+                    .find(|(agent_id, _)| agent_id == selected)
+                    .map(|(_, label)| label)
+            })
+            .unwrap_or_else(|| "All".to_string());
+        egui::ComboBox::from_id_salt("skill_agent_filter")
+            .selected_text(agent_text)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(model.skill_agent_filter().is_none(), "All")
+                    .clicked()
+                {
+                    model.set_skill_agent_filter(None);
+                }
+                for (agent_id, label) in model.skill_agent_filter_options() {
+                    if ui
+                        .selectable_label(
+                            model.skill_agent_filter() == Some(&agent_id),
+                            label.as_str(),
+                        )
+                        .clicked()
+                    {
+                        model.set_skill_agent_filter(Some(agent_id));
+                    }
+                }
+            });
+
+        ui.label(egui::RichText::new("Scope").color(colors.ink_subtle));
+        let scope_text = model.skill_scope_filter().unwrap_or("All").to_string();
+        egui::ComboBox::from_id_salt("skill_scope_filter")
+            .selected_text(scope_text)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(model.skill_scope_filter().is_none(), "All")
+                    .clicked()
+                {
+                    model.set_skill_scope_filter(None);
+                }
+                for scope in model.skill_scope_filter_options() {
+                    if ui
+                        .selectable_label(
+                            model.skill_scope_filter() == Some(scope.as_str()),
+                            &scope,
+                        )
+                        .clicked()
+                    {
+                        model.set_skill_scope_filter(Some(scope));
+                    }
+                }
+            });
+
+        ui.label(egui::RichText::new("Status").color(colors.ink_subtle));
+        let status_text = model.skill_status_filter().unwrap_or("All").to_string();
+        egui::ComboBox::from_id_salt("skill_status_filter")
+            .selected_text(status_text)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(model.skill_status_filter().is_none(), "All")
+                    .clicked()
+                {
+                    model.set_skill_status_filter(None);
+                }
+                for status in model.skill_status_filter_options() {
+                    if ui
+                        .selectable_label(model.skill_status_filter() == Some(status), status)
+                        .clicked()
+                    {
+                        model.set_skill_status_filter(Some(status.to_string()));
+                    }
+                }
+            });
+    });
 }
 
 fn render_inspector(ui: &mut egui::Ui, renderable: &RenderableView, colors: UiColors) {
@@ -604,14 +705,17 @@ fn render_skill_action_button(
         SkillAction::InstallLocal => {
             model.begin_install_local_skill();
         }
-        SkillAction::AdoptAgentSkills => {
+        SkillAction::ScanAgentSpaces => {
             let _ = model.request_adopt_all_agent_skills();
+        }
+        SkillAction::ImportManagedCopy => {
+            let _ = model.request_import_selected_skill_instance_as_managed_copy();
         }
         SkillAction::Enable => {
             let _ = model.request_enable_selected_skill_instance();
         }
         SkillAction::Disable => {
-            let _ = model.request_disable_selected_skill_instance();
+            let _ = model.request_disable_selected_skill_instance_with_confirmation(false);
         }
         SkillAction::Scan => {
             let _ = model.request_scan_selected_skill();
@@ -633,6 +737,21 @@ fn render_skill_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColo
             .clicked()
         {
             let _ = model.confirm_pending_uninstall();
+        }
+        ui.add_space(4.0);
+    }
+    if model
+        .pending_disable_skill_instance_confirmation()
+        .is_some()
+    {
+        ui.label(
+            egui::RichText::new(SKILL_INSTANCE_DISABLE_CONFIRMATION_MESSAGE).color(colors.warning),
+        );
+        if ui
+            .button(egui::RichText::new("Confirm Disable").color(colors.danger))
+            .clicked()
+        {
+            let _ = model.confirm_pending_disable_skill_instance();
         }
         ui.add_space(4.0);
     }

