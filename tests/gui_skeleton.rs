@@ -608,7 +608,7 @@ fn gui_adopt_all_agent_skills_imports_from_all_enabled_global_agent_dirs() {
         model.request_adopt_all_agent_skills(),
         Some(GuiActionIntent::AdoptAllAgentSkills)
     );
-    let controller = GuiController::new(paths.clone());
+    let controller = GuiController::with_home_dir(paths.clone(), home);
     assert!(model.execute_next_intent(&controller).unwrap().is_some());
 
     let names: Vec<_> = model
@@ -641,6 +641,62 @@ fn gui_adopt_all_agent_skills_imports_from_all_enabled_global_agent_dirs() {
 }
 
 #[test]
+fn gui_adopt_all_agent_skills_recursively_imports_codex_skill_libraries() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let home = project_path(&temp_dir, "home");
+    write_skill(
+        &home.join(".codex/plugins/cache/browser/1/skills/browser-skill"),
+        "# Browser skill\n",
+    );
+    write_skill(
+        &home.join(".codex/vendor_imports/skills/skills/.curated/vendor-skill"),
+        "# Vendor skill\n",
+    );
+    write_skill(
+        &home.join(".skills-manager/skills/managed-library-skill"),
+        "# Managed library skill\n",
+    );
+
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![AgentConfig {
+                id: AgentId::new("codex"),
+                label: "Codex".to_string(),
+                kind: AgentKind::BuiltIn,
+                global_skill_dirs: vec![home.join(".codex/skills")],
+                project_skill_dirs: vec![".agents/skills".into()],
+                enabled: true,
+            }],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.request_adopt_all_agent_skills().unwrap();
+    let controller = GuiController::with_home_dir(paths, home);
+
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+    assert_eq!(
+        model
+            .skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["browser-skill", "managed-library-skill", "vendor-skill"]
+    );
+    assert_eq!(
+        model.last_status().unwrap().message,
+        "Adopted Agent Skills into Global Inventory: 3 imported, 0 conflicts."
+    );
+}
+
+#[test]
 fn gui_adopt_all_agent_skills_skips_enabled_agents_without_global_dirs() {
     let temp_dir = TempDir::new().unwrap();
     let paths = test_paths(&temp_dir);
@@ -665,7 +721,7 @@ fn gui_adopt_all_agent_skills_skips_enabled_agents_without_global_dirs() {
 
     let mut model = GuiModel::load(&paths).unwrap();
     model.request_adopt_all_agent_skills().unwrap();
-    let controller = GuiController::new(paths);
+    let controller = GuiController::with_home_dir(paths, project_path(&temp_dir, "home"));
 
     assert!(model.execute_next_intent(&controller).unwrap().is_some());
     assert!(model.skills.is_empty());
@@ -708,7 +764,7 @@ fn gui_adopt_all_agent_skills_reloads_partial_imports_when_later_agent_fails() {
 
     let mut model = GuiModel::load(&paths).unwrap();
     model.request_adopt_all_agent_skills().unwrap();
-    let controller = GuiController::new(paths);
+    let controller = GuiController::with_home_dir(paths, project_path(&temp_dir, "home"));
 
     assert!(model.execute_next_intent(&controller).unwrap().is_some());
     assert_eq!(

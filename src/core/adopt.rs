@@ -87,47 +87,20 @@ pub fn global_agent_adopt_resilient(
     let mut imported = 0;
     let mut conflicts = 0;
     let mut failures = 0;
+    let mut visited = Vec::new();
 
     for global_root in global_roots {
         let global_root = expand_home(&global_root, request.home_dir);
         if !global_root.exists() {
             continue;
         }
-        let entries = match std::fs::read_dir(&global_root) {
-            Ok(entries) => entries,
-            Err(_) => {
-                failures += 1;
+        let (skill_dirs, root_failures) = discover_adoptable_skill_dirs(&global_root);
+        failures += root_failures;
+        for source_path in skill_dirs {
+            if visited.contains(&source_path) {
                 continue;
             }
-        };
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => {
-                    failures += 1;
-                    continue;
-                }
-            };
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(_) => {
-                    failures += 1;
-                    continue;
-                }
-            };
-            if !file_type.is_dir() {
-                continue;
-            }
-            let source_path = match Utf8PathBuf::from_path_buf(entry.path()) {
-                Ok(source_path) => source_path,
-                Err(_) => {
-                    failures += 1;
-                    continue;
-                }
-            };
-            if !is_global_adoptable_skill_dir(&source_path) {
-                continue;
-            }
+            visited.push(source_path.clone());
             match adopt_global_skill(&request, &source_path) {
                 Ok(GlobalAdoptOutcome::Imported) => imported += 1,
                 Ok(GlobalAdoptOutcome::Skipped) => {}
@@ -142,6 +115,62 @@ pub fn global_agent_adopt_resilient(
         conflicts,
         failures,
     })
+}
+
+fn discover_adoptable_skill_dirs(root: &Utf8Path) -> (Vec<Utf8PathBuf>, usize) {
+    let mut discovered = Vec::new();
+    let mut failures = 0;
+    discover_adoptable_skill_dirs_inner(root, &mut discovered, &mut failures);
+    discovered.sort();
+    discovered.dedup();
+    (discovered, failures)
+}
+
+fn discover_adoptable_skill_dirs_inner(
+    dir: &Utf8Path,
+    discovered: &mut Vec<Utf8PathBuf>,
+    failures: &mut usize,
+) {
+    if is_global_adoptable_skill_dir(dir) {
+        discovered.push(dir.to_path_buf());
+        return;
+    }
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => {
+            *failures += 1;
+            return;
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                *failures += 1;
+                continue;
+            }
+        };
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => {
+                *failures += 1;
+                continue;
+            }
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let child = match Utf8PathBuf::from_path_buf(entry.path()) {
+            Ok(child) => child,
+            Err(_) => {
+                *failures += 1;
+                continue;
+            }
+        };
+        discover_adoptable_skill_dirs_inner(&child, discovered, failures);
+    }
 }
 
 pub fn project_adopt(request: ProjectAdoptRequest<'_>) -> Result<AdoptReport> {

@@ -143,6 +143,7 @@ pub enum GuiActionIntent {
 #[derive(Clone, Debug)]
 pub struct GuiController {
     paths: AppPaths,
+    home_dir: Option<Utf8PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -246,9 +247,31 @@ fn pending_conflicts_intersection(
         .collect()
 }
 
+fn default_home_dir() -> Result<Utf8PathBuf> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "home directory"))?;
+    Utf8PathBuf::from_path_buf(home).map_err(|path| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("home path is not UTF-8: {}", path.display()),
+        )
+        .into()
+    })
+}
+
 impl GuiController {
     pub fn new(paths: AppPaths) -> Self {
-        Self { paths }
+        Self {
+            paths,
+            home_dir: None,
+        }
+    }
+
+    pub fn with_home_dir(paths: AppPaths, home_dir: Utf8PathBuf) -> Self {
+        Self {
+            paths,
+            home_dir: Some(home_dir),
+        }
     }
 
     pub fn paths(&self) -> &AppPaths {
@@ -271,15 +294,7 @@ impl GuiController {
                 }
             }
             GuiActionIntent::AdoptAllAgentSkills => {
-                let home = dirs::home_dir().ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::NotFound, "home directory")
-                })?;
-                let home = Utf8PathBuf::from_path_buf(home).map_err(|path| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("home path is not UTF-8: {}", path.display()),
-                    )
-                })?;
+                let home = self.home_dir.clone().map_or_else(default_home_dir, Ok)?;
                 let config = read_config(&self.paths)?;
                 let mut imported = 0;
                 let mut conflicts = 0;
