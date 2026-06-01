@@ -42,6 +42,9 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
         ],
         main_rows,
         inspector_sections: inspector_sections(model),
+        empty_message: model.skills.is_empty().then_some(
+            "No managed Skills yet. Install a local Skill or adopt existing Agent Skills.",
+        ),
     }
 }
 
@@ -49,7 +52,11 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
     let Some(skill) = model.selected_skill().or_else(|| model.skills.first()) else {
         return vec![InspectorSection {
             title: "Empty".to_string(),
-            lines: vec!["Install a local Skill or adopt existing Agent Skills.".to_string()],
+            lines: vec![
+                "No managed Skills yet.".to_string(),
+                "Install a local Skill from the CLI, or open Projects to adopt existing Agent Skills."
+                    .to_string(),
+            ],
         }];
     };
     let source = match &skill.source {
@@ -92,7 +99,8 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
         InspectorSection {
             title: "Actions".to_string(),
             lines: vec![
-                "Scan emits an intent for core execution.".to_string(),
+                "Scan runs the advisory security scanner for this managed Skill.".to_string(),
+                "Deploy copies this managed Skill to the selected project and Agent.".to_string(),
                 "Uninstall removes this Skill from Global Inventory. Project copies are not deleted."
                     .to_string(),
             ],

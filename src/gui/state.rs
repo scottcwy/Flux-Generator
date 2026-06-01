@@ -16,7 +16,7 @@ use crate::core::{
         ManagedSkill, SkillSource,
     },
     scan::scan_skill_dir,
-    Result,
+    Result, SkillKitsError,
 };
 use camino::Utf8PathBuf;
 use egui::Color32;
@@ -380,6 +380,19 @@ pub struct RenderableView {
     pub columns: Vec<String>,
     pub main_rows: Vec<RenderRow>,
     pub inspector_sections: Vec<InspectorSection>,
+    pub empty_message: Option<&'static str>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuiStatusKind {
+    Success,
+    Error,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuiStatus {
+    pub kind: GuiStatusKind,
+    pub message: String,
 }
 
 #[derive(Clone, Debug)]
@@ -399,6 +412,7 @@ pub struct GuiModel {
     selected_deployment: Option<String>,
     pending_remove_confirmation: Option<String>,
     pending_intents: Vec<GuiActionIntent>,
+    last_status: Option<GuiStatus>,
 }
 
 impl GuiModel {
@@ -464,6 +478,7 @@ impl GuiModel {
             selected_deployment: None,
             pending_remove_confirmation: None,
             pending_intents: Vec::new(),
+            last_status: None,
         })
     }
 
@@ -545,6 +560,10 @@ impl GuiModel {
         &self.pending_intents
     }
 
+    pub fn last_status(&self) -> Option<&GuiStatus> {
+        self.last_status.as_ref()
+    }
+
     pub fn pending_remove_confirmation(&self) -> Option<&str> {
         self.pending_remove_confirmation.as_deref()
     }
@@ -573,6 +592,36 @@ impl GuiModel {
             agent_id,
             skill_id,
         })
+    }
+
+    pub fn request_deploy_selected_skill_to_default_agent(&mut self) -> Option<GuiActionIntent> {
+        if !matches!(self.active_scope, GuiScope::Project(_)) {
+            return None;
+        }
+        let agent_id = self
+            .selected_agent
+            .as_ref()
+            .and_then(|selected| {
+                self.agents
+                    .iter()
+                    .find(|agent| agent.id == *selected && agent.enabled)
+            })
+            .or_else(|| {
+                self.agents
+                    .iter()
+                    .find(|agent| agent.enabled && !agent.project_skill_dirs.is_empty())
+            })?
+            .id
+            .clone();
+        self.request_deploy_selected_skill(agent_id)
+    }
+
+    pub fn has_explicit_project_deploy_target(&self) -> bool {
+        matches!(self.active_scope, GuiScope::Project(_))
+            && self
+                .agents
+                .iter()
+                .any(|agent| agent.enabled && !agent.project_skill_dirs.is_empty())
     }
 
     pub fn request_refresh_selected_project(&mut self) -> Option<GuiActionIntent> {
@@ -704,6 +753,7 @@ impl GuiModel {
             return Ok(None);
         }
         let intent = self.pending_intents.remove(0);
+        let success_message = self.intent_success_message(&intent);
         let active_view = self.active_view;
         let active_scope = self.active_scope.clone();
         let selected_skill = self.selected_skill.clone();
@@ -723,7 +773,16 @@ impl GuiModel {
                 )
             })
             .collect::<Vec<_>>();
-        let outcome = controller.execute(&intent)?;
+        let outcome = match controller.execute(&intent) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.last_status = Some(GuiStatus {
+                    kind: GuiStatusKind::Error,
+                    message: self.intent_error_message(&intent, &error),
+                });
+                return Err(error);
+            }
+        };
         *self = Self::load(controller.paths())?;
         for (path, pending_conflicts, skipped_conflicts) in project_conflict_state {
             if let Some(summary) = self
@@ -762,8 +821,157 @@ impl GuiModel {
                 .any(|deployment| deployment.id == *pending)
         });
         self.pending_intents = pending_intents;
+        self.last_status = Some(GuiStatus {
+            kind: GuiStatusKind::Success,
+            message: success_message,
+        });
         self.apply_controller_outcome(outcome);
         Ok(Some(intent))
+    }
+
+    fn intent_success_message(&self, intent: &GuiActionIntent) -> String {
+        match intent {
+            GuiActionIntent::ScanSkill { skill_id } => {
+                let skill_name = self
+                    .skills
+                    .iter()
+                    .find(|skill| skill.id == *skill_id)
+                    .map(|skill| skill.name.as_str())
+                    .unwrap_or_else(|| skill_id.as_str());
+                format!("Scanned {skill_name}.")
+            }
+            GuiActionIntent::UninstallSkill { skill_id } => {
+                let skill_name = self
+                    .skills
+                    .iter()
+                    .find(|skill| skill.id == *skill_id)
+                    .map(|skill| skill.name.as_str())
+                    .unwrap_or_else(|| skill_id.as_str());
+                format!("Uninstalled {skill_name} from Global Inventory.")
+            }
+            GuiActionIntent::DeploySkill {
+                project_path,
+                agent_id,
+                skill_id,
+            } => {
+                let skill_name = self
+                    .skills
+                    .iter()
+                    .find(|skill| skill.id == *skill_id)
+                    .map(|skill| skill.name.as_str())
+                    .unwrap_or_else(|| skill_id.as_str());
+                format!(
+                    "Deployed {skill_name} to {} for {}.",
+                    self.agent_label(agent_id),
+                    project_label(project_path)
+                )
+            }
+            GuiActionIntent::EnableDeployment {
+                project_path,
+                agent_id,
+                skill_name,
+            } => format!(
+                "Enabled {skill_name} for {} in {}.",
+                self.agent_label(agent_id),
+                project_label(project_path)
+            ),
+            GuiActionIntent::DisableDeployment {
+                project_path,
+                agent_id,
+                skill_name,
+            } => format!(
+                "Disabled {skill_name} for {} in {}.",
+                self.agent_label(agent_id),
+                project_label(project_path)
+            ),
+            GuiActionIntent::RemoveDeployment {
+                project_path,
+                agent_id,
+                skill_name,
+                ..
+            } => format!(
+                "Removed {skill_name} from {} for {}.",
+                self.agent_label(agent_id),
+                project_label(project_path)
+            ),
+            GuiActionIntent::RedeployDeployment {
+                project_path,
+                agent_id,
+                skill_name,
+                overwrite,
+                promote,
+            } => {
+                let verb = if *promote {
+                    "Promoted"
+                } else if *overwrite {
+                    "Overwrote"
+                } else {
+                    "Redeployed"
+                };
+                format!(
+                    "{verb} {skill_name} for {} in {}.",
+                    self.agent_label(agent_id),
+                    project_label(project_path)
+                )
+            }
+            GuiActionIntent::RefreshProject { project_path } => {
+                format!("Refreshed {}.", project_label(project_path))
+            }
+            GuiActionIntent::ProjectAdoptAll { project_path } => {
+                format!(
+                    "Adopted discovered Skills for {}.",
+                    project_label(project_path)
+                )
+            }
+            GuiActionIntent::ProjectImportConflictAsNew {
+                project_path,
+                skill_name,
+                ..
+            } => format!(
+                "Imported {skill_name} as a new managed Skill for {}.",
+                project_label(project_path)
+            ),
+            GuiActionIntent::OpenProject { project_path } => {
+                format!("Selected {}.", project_label(project_path))
+            }
+            GuiActionIntent::EditAgent { agent_id } => {
+                format!("Opened {} agent settings.", self.agent_label(agent_id))
+            }
+            GuiActionIntent::AddCustomAgent => "Opened custom Agent setup.".to_string(),
+        }
+    }
+
+    fn intent_error_message(&self, intent: &GuiActionIntent, error: &SkillKitsError) -> String {
+        match error {
+            SkillKitsError::DeployConflict { .. } => {
+                "Deploy conflict. The target already exists; adopt it, remove it, or choose another Skill name.".to_string()
+            }
+            SkillKitsError::AdoptionConflict { name } => {
+                format!("Adoption conflict for {name}. Import it as new or skip it.")
+            }
+            SkillKitsError::DeploymentDrift { .. } => {
+                "Redeploy blocked because the project copy has local changes. Keep it, overwrite from managed, or promote it to managed.".to_string()
+            }
+            SkillKitsError::UnsafeRemoveRequiresForce { .. } => {
+                "Remove blocked because the project copy has local changes. Confirm Remove to delete this deployed Skill only.".to_string()
+            }
+            SkillKitsError::MissingManagedSource { .. } => {
+                "Missing managed source. Promote the project copy to managed or remove it from the project.".to_string()
+            }
+            SkillKitsError::InvalidToggleState { .. } => {
+                "Invalid toggle state. Fix the SKILL.md / SKILL.md.disabled pair before continuing."
+                    .to_string()
+            }
+            _ => format!("{} failed: {error}", action_label(intent)),
+        }
+    }
+
+    fn agent_label(&self, agent_id: &AgentId) -> String {
+        self.agents
+            .iter()
+            .find(|agent| agent.id == *agent_id)
+            .map(|agent| agent.label.clone())
+            .unwrap_or_else(|| agent_id.to_string())
     }
 
     fn apply_controller_outcome(&mut self, outcome: GuiControllerOutcome) {
@@ -913,8 +1121,34 @@ impl Default for GuiModel {
             selected_deployment: None,
             pending_remove_confirmation: None,
             pending_intents: Vec::new(),
+            last_status: None,
         }
     }
+}
+
+fn action_label(intent: &GuiActionIntent) -> &'static str {
+    match intent {
+        GuiActionIntent::ScanSkill { .. } => "Scan",
+        GuiActionIntent::UninstallSkill { .. } => "Uninstall",
+        GuiActionIntent::DeploySkill { .. } => "Deploy",
+        GuiActionIntent::EnableDeployment { .. } => "Enable",
+        GuiActionIntent::DisableDeployment { .. } => "Disable",
+        GuiActionIntent::RemoveDeployment { .. } => "Remove",
+        GuiActionIntent::RedeployDeployment { .. } => "Redeploy",
+        GuiActionIntent::RefreshProject { .. } => "Refresh",
+        GuiActionIntent::ProjectAdoptAll { .. } => "Adopt all",
+        GuiActionIntent::ProjectImportConflictAsNew { .. } => "Import as new",
+        GuiActionIntent::OpenProject { .. } => "Open project",
+        GuiActionIntent::EditAgent { .. } => "Edit Agent",
+        GuiActionIntent::AddCustomAgent => "Add custom Agent",
+    }
+}
+
+fn project_label(project_path: &camino::Utf8Path) -> String {
+    project_path
+        .file_name()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| project_path.to_string())
 }
 
 #[derive(Clone, Copy, Debug)]

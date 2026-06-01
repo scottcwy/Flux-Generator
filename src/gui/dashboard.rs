@@ -62,6 +62,7 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
                 ],
             },
         ],
+        empty_message: None,
     }
 }
 

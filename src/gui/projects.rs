@@ -7,7 +7,7 @@ pub fn view_name() -> &'static str {
 
 pub fn renderable(model: &GuiModel) -> RenderableView {
     let selected_project = model.scope_project_path();
-    let main_rows = model
+    let main_rows: Vec<_> = model
         .deployment_statuses
         .iter()
         .filter(|status| {
@@ -30,6 +30,13 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
             ],
         })
         .collect();
+    let empty_message = if main_rows.is_empty() {
+        Some(
+            "No project deployments in this scope. Refresh a project, adopt existing Skills, or deploy a managed Skill.",
+        )
+    } else {
+        None
+    };
 
     RenderableView {
         view: model.active_view,
@@ -46,6 +53,7 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
         ],
         main_rows,
         inspector_sections: inspector_sections(model),
+        empty_message,
     }
 }
 
@@ -91,7 +99,11 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
 
     vec![InspectorSection {
         title: "Empty".to_string(),
-        lines: vec!["Open a project to scan project-level Skills.".to_string()],
+        lines: vec![
+            "No Recent Project is selected.".to_string(),
+            "Use the Scope switcher or refresh the current project to start onboarding."
+                .to_string(),
+        ],
     }]
 }
 
@@ -123,7 +135,8 @@ fn onboarding_lines(project: &crate::gui::state::ProjectSummary) -> Vec<String> 
 
     lines.extend([
         "No startup project scan has run.".to_string(),
-        "Refresh emits an explicit project scan intent.".to_string(),
+        "Refresh scans this project for existing Agent Skills without adopting automatically."
+            .to_string(),
     ]);
     lines
 }
@@ -134,8 +147,10 @@ fn action_lines(status: &DeploymentStatus) -> Vec<String> {
     }
 
     vec![
-        "Enable, disable, redeploy, promote, and remove emit intents.".to_string(),
-        "This project copy has local changes. Removing it deletes only this deployed Skill, not the Agent skill root.".to_string(),
+        "Enable or disable toggles SKILL.md / SKILL.md.disabled.".to_string(),
+        "Redeploy updates from managed; overwrite or promote is required when local drift exists."
+            .to_string(),
+        "Remove deletes only this deployed Skill, not the Agent skill root.".to_string(),
     ]
 }
 

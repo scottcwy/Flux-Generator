@@ -7,15 +7,23 @@ pub mod state;
 use crate::core::paths::AppPaths;
 use eframe::egui;
 use state::{
-    GuiModel, GuiScope, NavigationView, RenderableView, UiColors, DRIFT_REMOVE_CONFIRMATION_MESSAGE,
+    GuiController, GuiModel, GuiScope, GuiStatusKind, NavigationView, RenderableView, UiColors,
+    DRIFT_REMOVE_CONFIRMATION_MESSAGE,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SkillAction {
+    Scan,
+    Deploy,
+    Uninstall,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProjectAction {
+    Refresh,
     AdoptAll,
     ImportAsNew,
     Skip,
-    Deploy,
     Enable,
     Disable,
     Redeploy,
@@ -43,11 +51,11 @@ impl AgentAction {
 }
 
 impl ProjectAction {
+    const REFRESH: [Self; 1] = [Self::Refresh];
     const ONBOARDING: [Self; 1] = [Self::AdoptAll];
     const CONFLICT: [Self; 2] = [Self::ImportAsNew, Self::Skip];
 
-    const NORMAL: [Self; 7] = [
-        Self::Deploy,
+    const NORMAL: [Self; 6] = [
         Self::Enable,
         Self::Disable,
         Self::Redeploy,
@@ -60,10 +68,10 @@ impl ProjectAction {
 
     fn label(self) -> &'static str {
         match self {
+            Self::Refresh => "Refresh",
             Self::AdoptAll => "Adopt all",
             Self::ImportAsNew => "Import as new",
             Self::Skip => "Skip",
-            Self::Deploy => "Deploy",
             Self::Enable => "Enable",
             Self::Disable => "Disable",
             Self::Redeploy => "Redeploy",
@@ -72,6 +80,29 @@ impl ProjectAction {
             Self::Remove => "Remove",
         }
     }
+}
+
+impl SkillAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Scan => "Scan",
+            Self::Deploy => "Deploy",
+            Self::Uninstall => "Uninstall",
+        }
+    }
+}
+
+pub fn skill_actions(model: &GuiModel) -> Vec<SkillAction> {
+    if model.selected_skill().is_none() {
+        return Vec::new();
+    }
+
+    let mut actions = vec![SkillAction::Scan];
+    if model.has_explicit_project_deploy_target() {
+        actions.push(SkillAction::Deploy);
+    }
+    actions.push(SkillAction::Uninstall);
+    actions
 }
 
 pub fn agent_actions(model: &GuiModel) -> Vec<AgentAction> {
@@ -83,6 +114,21 @@ pub fn agent_actions(model: &GuiModel) -> Vec<AgentAction> {
 }
 
 pub fn project_actions(model: &GuiModel) -> Vec<ProjectAction> {
+    if model.selected_deployment_status().is_none() {
+        if model.selected_project_summary().is_none() {
+            return Vec::new();
+        }
+        if model
+            .selected_project_summary()
+            .is_some_and(|project| project.pending_conflicts.is_empty())
+            && model
+                .selected_project_summary()
+                .is_some_and(|project| project.discovered_unmanaged_count == 0)
+        {
+            return ProjectAction::REFRESH.to_vec();
+        }
+    }
+
     if model
         .selected_project_summary()
         .is_some_and(|project| !project.pending_conflicts.is_empty())
@@ -111,17 +157,22 @@ pub fn project_actions(model: &GuiModel) -> Vec<ProjectAction> {
 
 pub struct SkillKitsGuiApp {
     model: GuiModel,
+    controller: GuiController,
     colors: UiColors,
 }
 
 impl SkillKitsGuiApp {
     pub fn from_paths(paths: &AppPaths) -> crate::core::Result<Self> {
-        Ok(Self::new(GuiModel::load(paths)?))
+        Ok(Self::new(
+            GuiModel::load(paths)?,
+            GuiController::new(paths.clone()),
+        ))
     }
 
-    pub fn new(model: GuiModel) -> Self {
+    pub fn new(model: GuiModel, controller: GuiController) -> Self {
         Self {
             model,
+            controller,
             colors: UiColors::dark(),
         }
     }
@@ -144,6 +195,7 @@ pub fn run_native(paths: AppPaths) -> anyhow::Result<()> {
 impl eframe::App for SkillKitsGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         apply_dark_theme(ctx, self.colors);
+        self.execute_one_pending_intent();
 
         egui::TopBottomPanel::top("top_bar")
             .frame(egui::Frame::none().fill(self.colors.surface_1))
@@ -163,6 +215,14 @@ impl eframe::App for SkillKitsGuiApp {
                         ));
                     });
                 });
+                if let Some(status) = self.model.last_status() {
+                    let color = match status.kind {
+                        GuiStatusKind::Success => self.colors.success,
+                        GuiStatusKind::Error => self.colors.danger,
+                    };
+                    ui.separator();
+                    ui.label(egui::RichText::new(&status.message).color(color));
+                }
             });
 
         egui::SidePanel::left("sidebar")
@@ -225,6 +285,12 @@ impl eframe::App for SkillKitsGuiApp {
                 let renderable = self.model.renderable_view();
                 render_main(ui, &mut self.model, &renderable, self.colors);
             });
+    }
+}
+
+impl SkillKitsGuiApp {
+    pub fn execute_one_pending_intent(&mut self) {
+        let _ = self.model.execute_next_intent(&self.controller);
     }
 }
 
@@ -293,7 +359,10 @@ fn render_main(
 
     if renderable.main_rows.is_empty() {
         ui.add_space(20.0);
-        ui.label(egui::RichText::new("No rows").color(colors.ink_subtle));
+        ui.label(
+            egui::RichText::new(renderable.empty_message.unwrap_or("No rows"))
+                .color(colors.ink_subtle),
+        );
     }
 }
 
@@ -322,16 +391,16 @@ fn render_action_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiCol
     match model.active_view {
         NavigationView::Skills => {
             ui.horizontal(|ui| {
-                if ui.button("Scan").clicked() {
-                    let _ = model.request_scan_selected_skill();
-                }
-                if ui
-                    .button(egui::RichText::new("Uninstall").color(colors.danger))
-                    .clicked()
-                {
-                    let _ = model.request_uninstall_selected_skill();
+                for action in skill_actions(model) {
+                    render_skill_action_button(ui, model, colors, action);
                 }
             });
+            if skill_actions(model).is_empty() {
+                ui.label(
+                    egui::RichText::new("Select a Skill to scan, deploy, or uninstall.")
+                        .color(colors.ink_subtle),
+                );
+            }
         }
         NavigationView::Projects => {
             if model.pending_remove_confirmation().is_some() {
@@ -362,6 +431,37 @@ fn render_action_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiCol
             });
         }
         NavigationView::Dashboard => {}
+    }
+}
+
+fn render_skill_action_button(
+    ui: &mut egui::Ui,
+    model: &mut GuiModel,
+    colors: UiColors,
+    action: SkillAction,
+) {
+    let label = action.label();
+    let clicked = if matches!(action, SkillAction::Uninstall) {
+        ui.button(egui::RichText::new(label).color(colors.danger))
+            .clicked()
+    } else {
+        ui.button(label).clicked()
+    };
+
+    if !clicked {
+        return;
+    }
+
+    match action {
+        SkillAction::Scan => {
+            let _ = model.request_scan_selected_skill();
+        }
+        SkillAction::Deploy => {
+            let _ = model.request_deploy_selected_skill_to_default_agent();
+        }
+        SkillAction::Uninstall => {
+            let _ = model.request_uninstall_selected_skill();
+        }
     }
 }
 
@@ -399,6 +499,9 @@ fn render_project_action_button(
     }
 
     match action {
+        ProjectAction::Refresh => {
+            let _ = model.request_refresh_selected_project();
+        }
         ProjectAction::AdoptAll => {
             let _ = model.request_adopt_all_discovered_for_selected_project();
         }
@@ -407,11 +510,6 @@ fn render_project_action_button(
         }
         ProjectAction::Skip => {
             let _ = model.skip_selected_project_conflict();
-        }
-        ProjectAction::Deploy => {
-            if let Some(agent_id) = model.agents.first().map(|agent| agent.id.clone()) {
-                let _ = model.request_deploy_selected_skill(agent_id);
-            }
         }
         ProjectAction::Enable => {
             let _ = model.request_enable_selected_deployment();

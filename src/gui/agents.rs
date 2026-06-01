@@ -53,6 +53,9 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
         ],
         main_rows,
         inspector_sections: inspector_sections(model),
+        empty_message: model.agents.is_empty().then_some(
+            "No Agents configured. Add a custom Agent or restore the built-in defaults.",
+        ),
     }
 }
 
@@ -79,7 +82,7 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
             InspectorSection {
                 title: "Actions".to_string(),
                 lines: vec![
-                    "Edit path emits an intent for core-service execution.".to_string(),
+                    "Edit path is planned for v0.1 GUI configuration polish.".to_string(),
                     "No global Agent sync settings in v0.1.".to_string(),
                 ],
             },
