@@ -57,12 +57,29 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
             InspectorSection {
                 title: "Health".to_string(),
                 lines: vec![
-                    "Registry summaries loaded".to_string(),
-                    "Project scans run only on request".to_string(),
+                    format!("Registry {}", health_label(&summary.registry_health)),
+                    format!("Lock {}", health_label(&summary.lock_health)),
+                    format!("Cache {}", health_label(&summary.cache_health)),
+                    format!("Risk findings {}", summary.risk_count),
+                    format!("Outdated deployments {}", summary.outdated_deployment_count),
+                    format!("Drifted deployments {}", summary.drifted_deployment_count),
+                    format!("Invalid toggles {}", summary.invalid_toggle_count),
+                    format!(
+                        "Missing managed sources {}",
+                        summary.missing_managed_source_count
+                    ),
                 ],
             },
         ],
         empty_message: None,
+    }
+}
+
+fn health_label(health: &crate::core::status::HealthState) -> &'static str {
+    match health {
+        crate::core::status::HealthState::Ok => "Ok",
+        crate::core::status::HealthState::Warning => "Warning",
+        crate::core::status::HealthState::Error => "Error",
     }
 }
 

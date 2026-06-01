@@ -16,6 +16,7 @@ use crate::core::{
         ManagedSkill, SkillSource,
     },
     scan::{scan_skill_dir, RiskFinding, RiskSeverity},
+    status::{global_status, HealthState},
     Result, SkillKitsError,
 };
 use camino::Utf8PathBuf;
@@ -404,6 +405,14 @@ pub struct DashboardSummary {
     pub enabled_agent_count: usize,
     pub recent_project_count: usize,
     pub deployment_count: usize,
+    pub outdated_deployment_count: usize,
+    pub drifted_deployment_count: usize,
+    pub invalid_toggle_count: usize,
+    pub missing_managed_source_count: usize,
+    pub registry_health: HealthState,
+    pub lock_health: HealthState,
+    pub cache_health: HealthState,
+    pub risk_count: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -584,12 +593,39 @@ impl GuiModel {
                 }
             })
             .collect::<Vec<_>>();
+        let status = global_status(paths)?;
         let dashboard = DashboardSummary {
-            managed_skill_count: skills.len(),
-            agent_count: config.agents.len(),
-            enabled_agent_count: config.agents.iter().filter(|agent| agent.enabled).count(),
-            recent_project_count: config.recent_projects.len(),
+            managed_skill_count: status.managed_skill_count,
+            agent_count: status.agent_count,
+            enabled_agent_count: status.enabled_agent_count,
+            recent_project_count: status.recent_project_count,
             deployment_count: deployments.len(),
+            outdated_deployment_count: deployment_statuses
+                .iter()
+                .filter(|status| status.outdated)
+                .count(),
+            drifted_deployment_count: deployment_statuses
+                .iter()
+                .filter(|status| status.drift)
+                .count(),
+            invalid_toggle_count: deployment_statuses
+                .iter()
+                .filter(|status| {
+                    matches!(
+                        status.toggle,
+                        crate::core::registry::ToggleState::InvalidBothPresent
+                            | crate::core::registry::ToggleState::InvalidBothMissing
+                    )
+                })
+                .count(),
+            missing_managed_source_count: deployment_statuses
+                .iter()
+                .filter(|status| status.missing_managed_source)
+                .count(),
+            registry_health: status.registry_health,
+            lock_health: status.lock_health,
+            cache_health: status.cache_health,
+            risk_count: status.risk_count,
         };
         let selected_project = config
             .recent_projects
@@ -1494,6 +1530,14 @@ impl Default for GuiModel {
                 enabled_agent_count: 0,
                 recent_project_count: 0,
                 deployment_count: 0,
+                outdated_deployment_count: 0,
+                drifted_deployment_count: 0,
+                invalid_toggle_count: 0,
+                missing_managed_source_count: 0,
+                registry_health: HealthState::Ok,
+                lock_health: HealthState::Ok,
+                cache_health: HealthState::Ok,
+                risk_count: 0,
             },
             skills: Vec::new(),
             agents: Vec::new(),
