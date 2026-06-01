@@ -151,12 +151,13 @@ rtk rm -rf dist
 rtk mkdir -p dist/skill-kits-v0.1.0-macos-arm64
 rtk cp target/release/skill-kits dist/skill-kits-v0.1.0-macos-arm64/skill-kits
 rtk cp RELEASE.md dist/skill-kits-v0.1.0-macos-arm64/RELEASE.md
+rtk cp RELEASE_NOTES-v0.1.0.md dist/skill-kits-v0.1.0-macos-arm64/RELEASE_NOTES-v0.1.0.md
 rtk tar -C dist -czf dist/skill-kits-v0.1.0-macos-arm64.tar.gz skill-kits-v0.1.0-macos-arm64
 rtk shasum -a 256 dist/skill-kits-v0.1.0-macos-arm64.tar.gz > dist/skill-kits-v0.1.0-macos-arm64.tar.gz.sha256
 ```
 
-v0.1 is not signed or notarized. Record that decision in release notes before
-publishing outside a local/internal release channel.
+v0.1 is not signed or notarized. `RELEASE_NOTES-v0.1.0.md` records that
+decision for local/internal release distribution.
 
 ## Tag
 
