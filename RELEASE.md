@@ -54,8 +54,14 @@ rtk cp tests/fixtures/release-smoke/config.toml /tmp/skill-kits-smoke-home/.skil
 rtk cp -R tests/fixtures/release-smoke/project /tmp/skill-kits-smoke-project
 rtk perl -0pi -e 's#path = "/tmp/skill-kits-smoke-project"#path = "'$(cd /tmp/skill-kits-smoke-project && pwd -P)'"#' /tmp/skill-kits-smoke-home/.skill-kits/config.toml
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits install local tests/fixtures/release-smoke/source-skill
+rtk mkdir -p /tmp/skill-kits-smoke-home/.codex/skills/global-seed
+rtk cp tests/fixtures/release-smoke/project/.agents/skills/project-seed/SKILL.md /tmp/skill-kits-smoke-home/.codex/skills/global-seed/SKILL.md
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits adopt --global-agent codex
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project adopt project-seed --agent codex --project /tmp/skill-kits-smoke-project
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project deploy source-skill --agent codex --project /tmp/skill-kits-smoke-project
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project disable source-skill --agent codex --project /tmp/skill-kits-smoke-project
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project enable source-skill --agent codex --project /tmp/skill-kits-smoke-project
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project redeploy source-skill --agent codex --project /tmp/skill-kits-smoke-project
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project disable source-skill --agent codex --project /tmp/skill-kits-smoke-project
 rtk printf 'release smoke drift\n' > /tmp/skill-kits-smoke-project/.agents/skills/source-skill/local-edit.txt
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project status --project /tmp/skill-kits-smoke-project
@@ -65,7 +71,7 @@ To seed outdated state, replace the first managed hash in the fixture-seeded
 registry:
 
 ```bash
-rtk perl -0pi -e 's/content_hash = "[^"]+"/content_hash = "release-smoke-new-managed-hash"/' /tmp/skill-kits-smoke-home/.skill-kits/registry/skills.toml
+rtk perl -0pi -e 's/(name = "source-skill"(?s:.*?content_hash = )")[^"]+"/$1release-smoke-new-managed-hash"/' /tmp/skill-kits-smoke-home/.skill-kits/registry/skills.toml
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project status --project /tmp/skill-kits-smoke-project
 ```
 
@@ -74,6 +80,7 @@ To seed invalid toggle state, create both toggle files for the deployment:
 ```bash
 rtk cp /tmp/skill-kits-smoke-project/.agents/skills/source-skill/SKILL.md.disabled /tmp/skill-kits-smoke-project/.agents/skills/source-skill/SKILL.md
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project status --project /tmp/skill-kits-smoke-project
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits doctor
 ```
 
 To seed missing managed source, uninstall the managed Skill while leaving the
@@ -82,6 +89,7 @@ project deployment in place:
 ```bash
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits uninstall source-skill
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project status --project /tmp/skill-kits-smoke-project
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits doctor
 ```
 
 After seeding invalid toggle or missing managed source, `doctor` should report
@@ -121,9 +129,41 @@ Confirm the release binary can run core CLI paths without Node.js or Python.
 Run this after the baseline seed block and before destructive state variations:
 
 ```bash
+rtk target/release/skill-kits --version
 rtk otool -L target/release/skill-kits
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits list
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits list --format json
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits status
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits status --format json
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project status --project /tmp/skill-kits-smoke-project
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits project status --project /tmp/skill-kits-smoke-project --format json
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits scan --format json
 rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits doctor
+rtk env HOME=/tmp/skill-kits-smoke-home target/release/skill-kits doctor --fix
+```
+
+## Package
+
+Create a local macOS archive and checksum after the runtime smoke passes:
+
+```bash
+rtk rm -rf dist
+rtk mkdir -p dist/skill-kits-v0.1.0-macos-arm64
+rtk cp target/release/skill-kits dist/skill-kits-v0.1.0-macos-arm64/skill-kits
+rtk cp RELEASE.md dist/skill-kits-v0.1.0-macos-arm64/RELEASE.md
+rtk tar -C dist -czf dist/skill-kits-v0.1.0-macos-arm64.tar.gz skill-kits-v0.1.0-macos-arm64
+rtk shasum -a 256 dist/skill-kits-v0.1.0-macos-arm64.tar.gz > dist/skill-kits-v0.1.0-macos-arm64.tar.gz.sha256
+```
+
+v0.1 is not signed or notarized. Record that decision in release notes before
+publishing outside a local/internal release channel.
+
+## Tag
+
+Only tag after all checks above pass and the work is merged to the release
+branch:
+
+```bash
+rtk git status --short
+rtk git tag -a v0.1.0 -m "Skill-kits v0.1.0"
 ```
