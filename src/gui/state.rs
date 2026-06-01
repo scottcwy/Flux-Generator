@@ -703,6 +703,17 @@ impl GuiModel {
         &self.pending_intents
     }
 
+    pub fn pending_action_status_label(&self) -> String {
+        let Some(intent) = self.pending_intents.first() else {
+            return "Idle".to_string();
+        };
+        format!(
+            "Next: {} ({} queued)",
+            action_label(intent),
+            self.pending_intents.len()
+        )
+    }
+
     pub fn last_status(&self) -> Option<&GuiStatus> {
         self.last_status.as_ref()
     }

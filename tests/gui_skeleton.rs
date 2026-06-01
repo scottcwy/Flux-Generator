@@ -379,6 +379,7 @@ fn gui_status_feedback_records_last_success_and_last_error() {
     write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
 
     let mut model = GuiModel::load(&paths).unwrap();
+    assert_eq!(model.pending_action_status_label(), "Idle");
     model.select_scope(GuiScope::Project(project.clone()));
     model.select_skill(SkillId::new("frontend-design-a1b2c3d4"));
     model
@@ -1553,6 +1554,7 @@ fn actions_emit_intents_without_direct_filesystem_mutation() {
         })
     );
     assert_eq!(model.pending_intents().len(), 2);
+    assert_eq!(model.pending_action_status_label(), "Next: Scan (2 queued)");
     assert!(!project.join(".custom/skills/frontend-design").exists());
 }
 

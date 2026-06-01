@@ -226,10 +226,7 @@ impl eframe::App for SkillKitsGuiApp {
                         let _ = self.model.request_refresh_selected_project();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!(
-                            "{} pending intent(s)",
-                            self.model.pending_intents().len()
-                        ));
+                        ui.label(self.model.pending_action_status_label());
                     });
                 });
                 if let Some(status) = self.model.last_status() {
