@@ -1,6 +1,9 @@
 use crate::core::{
     adopt::{project_adopt_all, project_adopt_conflict_as_new, ProjectAdoptRequest},
-    agents::{add_custom_agent_config, update_agent_project_skill_dirs, AgentConfig},
+    agents::{
+        add_custom_agent_config, remove_custom_agent_config, reset_agent_project_skill_dirs,
+        update_agent_project_skill_dirs, AgentConfig, AgentKind,
+    },
     config::{read_config, RecentProject},
     ids::{AgentId, SkillId},
     install::{install_local_skill, uninstall_skill, InstallLocalRequest, UninstallSkillRequest},
@@ -114,6 +117,12 @@ pub enum GuiActionIntent {
     UpdateAgentProjectSkillDirs {
         agent_id: AgentId,
         project_skill_dirs: Vec<Utf8PathBuf>,
+    },
+    ResetAgentProjectSkillDirs {
+        agent_id: AgentId,
+    },
+    RemoveCustomAgent {
+        agent_id: AgentId,
     },
     AddCustomAgent {
         agent_id: AgentId,
@@ -391,6 +400,14 @@ impl GuiController {
                 project_skill_dirs,
             } => {
                 update_agent_project_skill_dirs(&self.paths, agent_id, project_skill_dirs.clone())?;
+                GuiControllerOutcome::None
+            }
+            GuiActionIntent::ResetAgentProjectSkillDirs { agent_id } => {
+                reset_agent_project_skill_dirs(&self.paths, agent_id)?;
+                GuiControllerOutcome::None
+            }
+            GuiActionIntent::RemoveCustomAgent { agent_id } => {
+                remove_custom_agent_config(&self.paths, agent_id)?;
                 GuiControllerOutcome::None
             }
             GuiActionIntent::AddCustomAgent {
@@ -1051,6 +1068,26 @@ impl GuiModel {
         self.push_intent(intent)
     }
 
+    pub fn request_reset_selected_agent_project_dirs(&mut self) -> Option<GuiActionIntent> {
+        let agent = self.selected_agent()?;
+        if agent.kind != AgentKind::BuiltIn {
+            return None;
+        }
+        self.push_intent(GuiActionIntent::ResetAgentProjectSkillDirs {
+            agent_id: agent.id.clone(),
+        })
+    }
+
+    pub fn request_remove_selected_custom_agent(&mut self) -> Option<GuiActionIntent> {
+        let agent = self.selected_agent()?;
+        if agent.kind != AgentKind::Custom {
+            return None;
+        }
+        self.push_intent(GuiActionIntent::RemoveCustomAgent {
+            agent_id: agent.id.clone(),
+        })
+    }
+
     pub fn cancel_agent_editor(&mut self) {
         self.agent_editor_draft = None;
     }
@@ -1144,9 +1181,8 @@ impl GuiModel {
         let skill_risk_reports = self.skill_risk_reports.clone();
         let selected_agent_after_save = match &intent {
             GuiActionIntent::AddCustomAgent { agent_id, .. }
-            | GuiActionIntent::UpdateAgentProjectSkillDirs { agent_id, .. } => {
-                Some(agent_id.clone())
-            }
+            | GuiActionIntent::UpdateAgentProjectSkillDirs { agent_id, .. }
+            | GuiActionIntent::ResetAgentProjectSkillDirs { agent_id } => Some(agent_id.clone()),
             _ => None,
         };
         let project_conflict_state = self
@@ -1372,6 +1408,15 @@ impl GuiModel {
                     "Updated {} project Skill directories.",
                     self.agent_label(agent_id)
                 )
+            }
+            GuiActionIntent::ResetAgentProjectSkillDirs { agent_id } => {
+                format!(
+                    "Reset {} project Skill directories.",
+                    self.agent_label(agent_id)
+                )
+            }
+            GuiActionIntent::RemoveCustomAgent { agent_id } => {
+                format!("Removed custom Agent {}.", self.agent_label(agent_id))
             }
             GuiActionIntent::AddCustomAgent { label, .. } => {
                 format!("Added custom Agent {label}.")
@@ -1656,6 +1701,8 @@ fn action_label(intent: &GuiActionIntent) -> &'static str {
         GuiActionIntent::ProjectImportConflictAsNew { .. } => "Import as new",
         GuiActionIntent::OpenProject { .. } => "Open project",
         GuiActionIntent::UpdateAgentProjectSkillDirs { .. } => "Update Agent",
+        GuiActionIntent::ResetAgentProjectSkillDirs { .. } => "Reset Agent",
+        GuiActionIntent::RemoveCustomAgent { .. } => "Remove custom Agent",
         GuiActionIntent::AddCustomAgent { .. } => "Add custom Agent",
     }
 }

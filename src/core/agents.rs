@@ -200,6 +200,50 @@ pub fn update_agent_project_skill_dirs(
     })
 }
 
+pub fn reset_agent_project_skill_dirs(paths: &AppPaths, agent_id: &AgentId) -> Result<AgentConfig> {
+    let default_agent =
+        built_in_agent_config(agent_id).ok_or_else(|| SkillKitsError::InvalidAgentConfig {
+            reason: format!("{agent_id} is not a built-in Agent"),
+        })?;
+
+    update_config(paths, |config| {
+        let agent = config
+            .agents
+            .iter_mut()
+            .find(|agent| agent.id == *agent_id)
+            .ok_or_else(|| SkillKitsError::AgentNotFound {
+                agent_id: agent_id.clone(),
+            })?;
+        if agent.kind != AgentKind::BuiltIn {
+            return Err(SkillKitsError::InvalidAgentConfig {
+                reason: format!("{agent_id} is not a built-in Agent"),
+            });
+        }
+
+        agent.project_skill_dirs = default_agent.project_skill_dirs;
+        Ok(agent.clone())
+    })
+}
+
+pub fn remove_custom_agent_config(paths: &AppPaths, agent_id: &AgentId) -> Result<AgentConfig> {
+    update_config(paths, |config| {
+        let index = config
+            .agents
+            .iter()
+            .position(|agent| agent.id == *agent_id)
+            .ok_or_else(|| SkillKitsError::AgentNotFound {
+                agent_id: agent_id.clone(),
+            })?;
+        if config.agents[index].kind != AgentKind::Custom {
+            return Err(SkillKitsError::InvalidAgentConfig {
+                reason: format!("{agent_id} is not a custom Agent"),
+            });
+        }
+
+        Ok(config.agents.remove(index))
+    })
+}
+
 fn validated_agent_id(id: AgentId) -> Result<AgentId> {
     let value = id.as_str().trim();
     if value.is_empty() {

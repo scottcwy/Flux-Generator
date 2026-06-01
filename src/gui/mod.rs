@@ -38,16 +38,19 @@ pub enum ProjectAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentAction {
     EditSelected,
+    ResetDefault,
+    RemoveCustom,
     AddCustom,
 }
 
 impl AgentAction {
-    const WITH_SELECTION: [Self; 2] = [Self::EditSelected, Self::AddCustom];
     const EMPTY: [Self; 1] = [Self::AddCustom];
 
     fn label(self) -> &'static str {
         match self {
             Self::EditSelected => "Edit path",
+            Self::ResetDefault => "Reset default",
+            Self::RemoveCustom => "Remove custom",
             Self::AddCustom => "Add custom",
         }
     }
@@ -112,11 +115,17 @@ pub fn skill_actions(model: &GuiModel) -> Vec<SkillAction> {
 }
 
 pub fn agent_actions(model: &GuiModel) -> Vec<AgentAction> {
-    if model.selected_agent().is_some() {
-        AgentAction::WITH_SELECTION.to_vec()
-    } else {
-        AgentAction::EMPTY.to_vec()
+    let Some(agent) = model.selected_agent() else {
+        return AgentAction::EMPTY.to_vec();
+    };
+
+    let mut actions = vec![AgentAction::EditSelected];
+    match agent.kind {
+        crate::core::agents::AgentKind::BuiltIn => actions.push(AgentAction::ResetDefault),
+        crate::core::agents::AgentKind::Custom => actions.push(AgentAction::RemoveCustom),
     }
+    actions.push(AgentAction::AddCustom);
+    actions
 }
 
 pub fn project_actions(model: &GuiModel) -> Vec<ProjectAction> {
@@ -522,14 +531,32 @@ fn render_skill_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColo
     });
 }
 
-fn render_agent_action_button(ui: &mut egui::Ui, model: &mut GuiModel, action: AgentAction) {
-    if !ui.button(action.label()).clicked() {
+fn render_agent_action_button(
+    ui: &mut egui::Ui,
+    model: &mut GuiModel,
+    colors: UiColors,
+    action: AgentAction,
+) {
+    let label = action.label();
+    let clicked = if matches!(action, AgentAction::RemoveCustom) {
+        ui.button(egui::RichText::new(label).color(colors.danger))
+            .clicked()
+    } else {
+        ui.button(label).clicked()
+    };
+    if !clicked {
         return;
     }
 
     match action {
         AgentAction::EditSelected => {
             let _ = model.begin_edit_selected_agent_path();
+        }
+        AgentAction::ResetDefault => {
+            let _ = model.request_reset_selected_agent_project_dirs();
+        }
+        AgentAction::RemoveCustom => {
+            let _ = model.request_remove_selected_custom_agent();
         }
         AgentAction::AddCustom => {
             model.begin_add_custom_agent();
@@ -568,7 +595,7 @@ fn render_agent_editor_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors:
 
     ui.horizontal(|ui| {
         for action in agent_actions(model) {
-            render_agent_action_button(ui, model, action);
+            render_agent_action_button(ui, model, colors, action);
         }
     });
 }

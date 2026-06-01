@@ -1,5 +1,6 @@
 use skill_kits::core::agents::{
-    add_custom_agent_config, update_agent_project_skill_dirs, AgentConfig, AgentKind,
+    add_custom_agent_config, remove_custom_agent_config, reset_agent_project_skill_dirs,
+    update_agent_project_skill_dirs, AgentConfig, AgentKind,
 };
 use skill_kits::core::config::{read_config, write_config, Config};
 use skill_kits::core::error::SkillKitsError;
@@ -394,4 +395,124 @@ fn update_agent_project_skill_dirs_rejects_absolute_dirs() {
         read_config(&paths).unwrap().agents[0].project_skill_dirs,
         vec![camino::Utf8PathBuf::from(".custom/skills")]
     );
+}
+
+#[test]
+fn reset_agent_project_skill_dirs_restores_built_in_default_and_preserves_custom_agents() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![
+                AgentConfig {
+                    id: AgentId::new("codex"),
+                    label: "Codex".to_string(),
+                    kind: AgentKind::BuiltIn,
+                    global_skill_dirs: vec!["~/.codex/skills".into()],
+                    project_skill_dirs: vec![".codex/custom".into()],
+                    enabled: true,
+                },
+                AgentConfig {
+                    id: AgentId::new("zed"),
+                    label: "Zed".to_string(),
+                    kind: AgentKind::Custom,
+                    global_skill_dirs: Vec::new(),
+                    project_skill_dirs: vec![".zed/skills".into()],
+                    enabled: true,
+                },
+            ],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+
+    let reset = reset_agent_project_skill_dirs(&paths, &AgentId::new("codex")).unwrap();
+
+    assert_eq!(reset.kind, AgentKind::BuiltIn);
+    assert_eq!(
+        reset.project_skill_dirs,
+        vec![camino::Utf8PathBuf::from(".agents/skills")]
+    );
+    let config = read_config(&paths).unwrap();
+    assert_eq!(config.agents[0], reset);
+    assert_eq!(config.agents[1].id, AgentId::new("zed"));
+}
+
+#[test]
+fn reset_agent_project_skill_dirs_rejects_custom_agent() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    let config = Config {
+        agents: vec![AgentConfig {
+            id: AgentId::new("zed"),
+            label: "Zed".to_string(),
+            kind: AgentKind::Custom,
+            global_skill_dirs: Vec::new(),
+            project_skill_dirs: vec![".zed/skills".into()],
+            enabled: true,
+        }],
+        ..Config::default()
+    };
+    write_config(&paths, &config).unwrap();
+
+    let err = reset_agent_project_skill_dirs(&paths, &AgentId::new("zed")).unwrap_err();
+
+    assert!(matches!(err, SkillKitsError::InvalidAgentConfig { .. }));
+    assert_eq!(read_config(&paths).unwrap(), config);
+}
+
+#[test]
+fn remove_custom_agent_config_removes_only_custom_agents() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![
+                AgentConfig {
+                    id: AgentId::new("codex"),
+                    label: "Codex".to_string(),
+                    kind: AgentKind::BuiltIn,
+                    global_skill_dirs: vec!["~/.codex/skills".into()],
+                    project_skill_dirs: vec![".agents/skills".into()],
+                    enabled: true,
+                },
+                AgentConfig {
+                    id: AgentId::new("zed"),
+                    label: "Zed".to_string(),
+                    kind: AgentKind::Custom,
+                    global_skill_dirs: Vec::new(),
+                    project_skill_dirs: vec![".zed/skills".into()],
+                    enabled: true,
+                },
+            ],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+
+    let removed = remove_custom_agent_config(&paths, &AgentId::new("zed")).unwrap();
+
+    assert_eq!(removed.id, AgentId::new("zed"));
+    let config = read_config(&paths).unwrap();
+    assert_eq!(config.agents.len(), 1);
+    assert_eq!(config.agents[0].id, AgentId::new("codex"));
+}
+
+#[test]
+fn remove_custom_agent_config_rejects_built_in_agent() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    let config = Config::default();
+    write_config(&paths, &config).unwrap();
+
+    let err = remove_custom_agent_config(&paths, &AgentId::new("codex")).unwrap_err();
+
+    assert!(matches!(err, SkillKitsError::InvalidAgentConfig { .. }));
+    assert_eq!(read_config(&paths).unwrap(), config);
 }

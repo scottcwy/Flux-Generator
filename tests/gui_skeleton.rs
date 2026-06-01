@@ -1972,7 +1972,7 @@ fn invalid_agent_editor_save_reports_error_and_preserves_config() {
 }
 
 #[test]
-fn agents_controls_offer_edit_selected_and_add_custom_actions() {
+fn agents_controls_offer_reset_for_built_ins_and_remove_for_custom_agents() {
     let mut model = GuiModel::default();
     assert_eq!(agent_actions(&model), vec![AgentAction::AddCustom]);
 
@@ -1988,7 +1988,139 @@ fn agents_controls_offer_edit_selected_and_add_custom_actions() {
 
     assert_eq!(
         agent_actions(&model),
-        vec![AgentAction::EditSelected, AgentAction::AddCustom]
+        vec![
+            AgentAction::EditSelected,
+            AgentAction::ResetDefault,
+            AgentAction::AddCustom
+        ]
+    );
+
+    model.agents.push(AgentConfig {
+        id: AgentId::new("zed"),
+        label: "Zed".to_string(),
+        kind: AgentKind::Custom,
+        global_skill_dirs: Vec::new(),
+        project_skill_dirs: vec![".zed/skills".into()],
+        enabled: true,
+    });
+    model.select_agent(AgentId::new("zed"));
+
+    assert_eq!(
+        agent_actions(&model),
+        vec![
+            AgentAction::EditSelected,
+            AgentAction::RemoveCustom,
+            AgentAction::AddCustom
+        ]
+    );
+}
+
+#[test]
+fn reset_agent_action_restores_default_project_dirs_and_reloads_model() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![AgentConfig {
+                id: AgentId::new("codex"),
+                label: "Codex".to_string(),
+                kind: AgentKind::BuiltIn,
+                global_skill_dirs: vec!["~/.codex/skills".into()],
+                project_skill_dirs: vec![".codex/custom".into()],
+                enabled: true,
+            }],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.select_agent(AgentId::new("codex"));
+
+    assert_eq!(
+        model.request_reset_selected_agent_project_dirs(),
+        Some(GuiActionIntent::ResetAgentProjectSkillDirs {
+            agent_id: AgentId::new("codex"),
+        })
+    );
+
+    let controller = GuiController::new(paths.clone());
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+
+    assert_eq!(model.selected_agent().unwrap().id, AgentId::new("codex"));
+    assert_eq!(
+        model.selected_agent().unwrap().project_skill_dirs,
+        vec![Utf8PathBuf::from(".agents/skills")]
+    );
+    assert_eq!(
+        model.last_status().unwrap().message,
+        "Reset Codex project Skill directories."
+    );
+}
+
+#[test]
+fn remove_custom_agent_action_deletes_config_entry_and_clears_selection() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(
+        &paths,
+        &Config {
+            agents: vec![
+                AgentConfig {
+                    id: AgentId::new("codex"),
+                    label: "Codex".to_string(),
+                    kind: AgentKind::BuiltIn,
+                    global_skill_dirs: vec!["~/.codex/skills".into()],
+                    project_skill_dirs: vec![".agents/skills".into()],
+                    enabled: true,
+                },
+                AgentConfig {
+                    id: AgentId::new("zed"),
+                    label: "Zed".to_string(),
+                    kind: AgentKind::Custom,
+                    global_skill_dirs: Vec::new(),
+                    project_skill_dirs: vec![".zed/skills".into()],
+                    enabled: true,
+                },
+            ],
+            ..Config::default()
+        },
+    )
+    .unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+
+    let mut model = GuiModel::load(&paths).unwrap();
+    model.select_agent(AgentId::new("zed"));
+
+    assert_eq!(
+        model.request_remove_selected_custom_agent(),
+        Some(GuiActionIntent::RemoveCustomAgent {
+            agent_id: AgentId::new("zed"),
+        })
+    );
+
+    let controller = GuiController::new(paths.clone());
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+
+    assert!(model.selected_agent().is_none());
+    assert!(!model
+        .agents
+        .iter()
+        .any(|agent| agent.id == AgentId::new("zed")));
+    assert!(!read_config(&paths)
+        .unwrap()
+        .agents
+        .iter()
+        .any(|agent| agent.id == AgentId::new("zed")));
+    assert_eq!(
+        model.last_status().unwrap().message,
+        "Removed custom Agent Zed."
     );
 }
 
