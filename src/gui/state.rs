@@ -15,7 +15,7 @@ use crate::core::{
         read_deployments_registry, read_skills_registry, DeploymentRecord, DeploymentStatus,
         ManagedSkill, SkillSource,
     },
-    scan::scan_skill_dir,
+    scan::{scan_skill_dir, RiskFinding, RiskSeverity},
     Result, SkillKitsError,
 };
 use camino::Utf8PathBuf;
@@ -115,6 +115,11 @@ pub struct GuiController {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GuiControllerOutcome {
     None,
+    SkillScan {
+        skill_id: SkillId,
+        scanned_hash: String,
+        findings: Vec<RiskFinding>,
+    },
     ProjectScan {
         project_path: Utf8PathBuf,
         discovered_unmanaged_count: usize,
@@ -178,14 +183,19 @@ impl GuiController {
     pub fn execute(&self, intent: &GuiActionIntent) -> Result<GuiControllerOutcome> {
         let outcome = match intent {
             GuiActionIntent::ScanSkill { skill_id } => {
-                if let Some(skill) = read_skills_registry(&self.paths)?
+                let skill = read_skills_registry(&self.paths)?
                     .skills
                     .into_iter()
                     .find(|skill| skill.id == *skill_id)
-                {
-                    let _findings = scan_skill_dir(&skill.managed_path)?;
+                    .ok_or_else(|| SkillKitsError::SkillNotFound {
+                        query: skill_id.to_string(),
+                    })?;
+                let findings = scan_skill_dir(&skill.managed_path)?;
+                GuiControllerOutcome::SkillScan {
+                    skill_id: skill_id.clone(),
+                    scanned_hash: skill.content_hash,
+                    findings,
                 }
-                GuiControllerOutcome::None
             }
             GuiActionIntent::UninstallSkill { skill_id } => {
                 uninstall_skill(UninstallSkillRequest {
@@ -395,6 +405,49 @@ pub struct GuiStatus {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuiRiskReport {
+    pub scanned_hash: String,
+    pub findings: Vec<RiskFinding>,
+}
+
+impl GuiRiskReport {
+    pub fn summary_label(&self) -> String {
+        let high = self
+            .findings
+            .iter()
+            .filter(|finding| finding.severity == RiskSeverity::High)
+            .count();
+        let warn = self
+            .findings
+            .iter()
+            .filter(|finding| finding.severity == RiskSeverity::Warn)
+            .count();
+        let info = self
+            .findings
+            .iter()
+            .filter(|finding| finding.severity == RiskSeverity::Info)
+            .count();
+
+        let mut parts = Vec::new();
+        if high > 0 {
+            parts.push(format!("{high} high"));
+        }
+        if warn > 0 {
+            parts.push(format!("{warn} warn"));
+        }
+        if info > 0 {
+            parts.push(format!("{info} info"));
+        }
+
+        if parts.is_empty() {
+            "No findings".to_string()
+        } else {
+            parts.join(", ")
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GuiModel {
     pub active_view: NavigationView,
@@ -413,6 +466,7 @@ pub struct GuiModel {
     pending_remove_confirmation: Option<String>,
     pending_intents: Vec<GuiActionIntent>,
     last_status: Option<GuiStatus>,
+    skill_risk_reports: Vec<(SkillId, GuiRiskReport)>,
 }
 
 impl GuiModel {
@@ -479,6 +533,7 @@ impl GuiModel {
             pending_remove_confirmation: None,
             pending_intents: Vec::new(),
             last_status: None,
+            skill_risk_reports: Vec::new(),
         })
     }
 
@@ -562,6 +617,13 @@ impl GuiModel {
 
     pub fn last_status(&self) -> Option<&GuiStatus> {
         self.last_status.as_ref()
+    }
+
+    pub fn skill_risk_report(&self, skill_id: &SkillId) -> Option<&GuiRiskReport> {
+        self.skill_risk_reports
+            .iter()
+            .find(|(id, _)| id == skill_id)
+            .map(|(_, report)| report)
     }
 
     pub fn pending_remove_confirmation(&self) -> Option<&str> {
@@ -753,7 +815,6 @@ impl GuiModel {
             return Ok(None);
         }
         let intent = self.pending_intents.remove(0);
-        let success_message = self.intent_success_message(&intent);
         let active_view = self.active_view;
         let active_scope = self.active_scope.clone();
         let selected_skill = self.selected_skill.clone();
@@ -762,6 +823,7 @@ impl GuiModel {
         let selected_deployment = self.selected_deployment.clone();
         let pending_remove_confirmation = self.pending_remove_confirmation.clone();
         let pending_intents = self.pending_intents.clone();
+        let skill_risk_reports = self.skill_risk_reports.clone();
         let project_conflict_state = self
             .project_summaries
             .iter()
@@ -783,6 +845,7 @@ impl GuiModel {
                 return Err(error);
             }
         };
+        let success_message = self.intent_success_message(&intent, &outcome);
         *self = Self::load(controller.paths())?;
         for (path, pending_conflicts, skipped_conflicts) in project_conflict_state {
             if let Some(summary) = self
@@ -821,6 +884,14 @@ impl GuiModel {
                 .any(|deployment| deployment.id == *pending)
         });
         self.pending_intents = pending_intents;
+        self.skill_risk_reports = skill_risk_reports
+            .into_iter()
+            .filter(|(skill_id, report)| {
+                self.skills
+                    .iter()
+                    .any(|skill| skill.id == *skill_id && skill.content_hash == report.scanned_hash)
+            })
+            .collect();
         self.last_status = Some(GuiStatus {
             kind: GuiStatusKind::Success,
             message: success_message,
@@ -829,7 +900,11 @@ impl GuiModel {
         Ok(Some(intent))
     }
 
-    fn intent_success_message(&self, intent: &GuiActionIntent) -> String {
+    fn intent_success_message(
+        &self,
+        intent: &GuiActionIntent,
+        outcome: &GuiControllerOutcome,
+    ) -> String {
         match intent {
             GuiActionIntent::ScanSkill { skill_id } => {
                 let skill_name = self
@@ -838,7 +913,15 @@ impl GuiModel {
                     .find(|skill| skill.id == *skill_id)
                     .map(|skill| skill.name.as_str())
                     .unwrap_or_else(|| skill_id.as_str());
-                format!("Scanned {skill_name}.")
+                let summary = match outcome {
+                    GuiControllerOutcome::SkillScan { findings, .. } => GuiRiskReport {
+                        scanned_hash: String::new(),
+                        findings: findings.clone(),
+                    }
+                    .summary_label(),
+                    _ => "No findings".to_string(),
+                };
+                format!("Scanned {skill_name}: {summary}.")
             }
             GuiActionIntent::UninstallSkill { skill_id } => {
                 let skill_name = self
@@ -977,6 +1060,21 @@ impl GuiModel {
     fn apply_controller_outcome(&mut self, outcome: GuiControllerOutcome) {
         match outcome {
             GuiControllerOutcome::None => {}
+            GuiControllerOutcome::SkillScan {
+                skill_id,
+                scanned_hash,
+                findings,
+            } => {
+                self.skill_risk_reports
+                    .retain(|(existing_id, _)| existing_id != &skill_id);
+                self.skill_risk_reports.push((
+                    skill_id,
+                    GuiRiskReport {
+                        scanned_hash,
+                        findings,
+                    },
+                ));
+            }
             GuiControllerOutcome::ProjectScan {
                 project_path,
                 discovered_unmanaged_count,
@@ -1122,6 +1220,7 @@ impl Default for GuiModel {
             pending_remove_confirmation: None,
             pending_intents: Vec::new(),
             last_status: None,
+            skill_risk_reports: Vec::new(),
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::core::registry::{DeploymentStatus, ManagedSkill, ToggleState};
 use crate::gui::state::{
-    skill_source_label, GuiModel, InspectorSection, RenderRow, RenderableView,
+    skill_source_label, GuiModel, GuiRiskReport, InspectorSection, RenderRow, RenderableView,
 };
 
 pub fn view_name() -> &'static str {
@@ -22,7 +22,7 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
                 cells: vec![
                     skill.name.clone(),
                     skill_source_label(&skill.source),
-                    "Not scanned".to_string(),
+                    risk_label(model, skill),
                     deployment_count.to_string(),
                     skill.updated_at.clone(),
                 ],
@@ -89,6 +89,10 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
             lines: project_deployment_lines(model, skill),
         },
         InspectorSection {
+            title: "Risk Findings".to_string(),
+            lines: risk_lines(model, skill),
+        },
+        InspectorSection {
             title: "Registry Metadata".to_string(),
             lines: vec![
                 format!("ID {}", skill.id),
@@ -141,6 +145,33 @@ fn project_deployment_lines(model: &GuiModel, skill: &ManagedSkill) -> Vec<Strin
             )
         })
         .collect()
+}
+
+fn risk_label(model: &GuiModel, skill: &ManagedSkill) -> String {
+    model
+        .skill_risk_report(&skill.id)
+        .map(GuiRiskReport::summary_label)
+        .unwrap_or_else(|| "Not scanned".to_string())
+}
+
+fn risk_lines(model: &GuiModel, skill: &ManagedSkill) -> Vec<String> {
+    let Some(report) = model.skill_risk_report(&skill.id) else {
+        return vec!["Not scanned yet.".to_string()];
+    };
+
+    let mut lines = vec![format!("{}.", report.summary_label())];
+    lines.extend(report.findings.iter().map(|finding| {
+        format!(
+            "{} line {} - {}",
+            finding.rule_id,
+            finding
+                .line
+                .map(|line| line.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            finding.message
+        )
+    }));
+    lines
 }
 
 fn deployment_status_label(status: &DeploymentStatus) -> String {
