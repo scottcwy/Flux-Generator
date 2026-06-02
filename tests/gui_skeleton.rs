@@ -15,14 +15,15 @@ use skill_kits::core::{
 };
 use skill_kits::gui::state::{
     GuiActionIntent, GuiController, GuiModel, GuiScope, GuiStatusKind, NavigationView,
-    ProjectConflict, ProjectDiscoveredSkill, ProjectSummary, DRIFT_REMOVE_CONFIRMATION_MESSAGE,
-    GLOBAL_UNINSTALL_CONFIRMATION_MESSAGE,
+    ProjectConflict, ProjectDiscoveredSkill, ProjectSummary, UiColors,
+    DRIFT_REMOVE_CONFIRMATION_MESSAGE, GLOBAL_UNINSTALL_CONFIRMATION_MESSAGE,
 };
 use skill_kits::gui::{
     agent_actions, icons, inspector_line_presentation, native_options, path_validation_message,
-    project_actions, skill_actions, workbench_cell_style, workbench_row_accepts_keyboard_key,
-    AgentAction, InspectorLineKind, InspectorLinePresentation, PathFieldKind, ProjectAction,
-    SkillAction, SkillKitsGuiApp, WorkbenchCellStyle,
+    project_actions, sidebar_nav_label, skill_actions, status_badge_fill, workbench_cell_style,
+    workbench_row_accepts_keyboard_key, workbench_row_fill, AgentAction, InspectorLineKind,
+    InspectorLinePresentation, PathFieldKind, ProjectAction, SkillAction, SkillKitsGuiApp,
+    WorkbenchCellStyle, SIDEBAR_NAV_ROW_HEIGHT, SIDEBAR_WIDTH,
 };
 use tempfile::TempDir;
 
@@ -834,6 +835,39 @@ fn navigation_titles_match_frozen_agent_space_shape() {
         model.navigate(view);
         assert_eq!(model.renderable_view().title, title);
     }
+}
+
+#[test]
+fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
+    let colors = UiColors::dark();
+
+    assert_eq!(SIDEBAR_WIDTH, 244.0);
+    assert_eq!(SIDEBAR_NAV_ROW_HEIGHT, 36.0);
+    assert_eq!(
+        sidebar_nav_label(NavigationView::Skills),
+        icons::button_label(icons::SKILL, "Skill")
+    );
+
+    assert_eq!(
+        workbench_row_fill(false, false, colors),
+        egui::Color32::TRANSPARENT
+    );
+    assert_eq!(workbench_row_fill(false, true, colors), colors.surface_2);
+    assert_eq!(workbench_row_fill(true, false, colors), colors.surface_3);
+    assert_eq!(workbench_row_fill(true, true, colors), colors.surface_3);
+
+    assert_eq!(
+        status_badge_fill("Enabled", false, false, colors),
+        colors.surface_2
+    );
+    assert_eq!(
+        status_badge_fill("Read-only", false, false, colors),
+        colors.surface_1
+    );
+    assert_eq!(
+        status_badge_fill("Read-only", true, false, colors),
+        colors.surface_2
+    );
 }
 
 #[test]
