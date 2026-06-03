@@ -19,11 +19,12 @@ use skill_kits::gui::state::{
     DRIFT_REMOVE_CONFIRMATION_MESSAGE, GLOBAL_UNINSTALL_CONFIRMATION_MESSAGE,
 };
 use skill_kits::gui::{
-    agent_actions, icons, inspector_line_presentation, native_options, path_validation_message,
-    plugin_actions, project_actions, sidebar_nav_label, skill_actions, status_badge_fill,
-    workbench_cell_style, workbench_row_accepts_keyboard_key, workbench_row_fill, AgentAction,
-    InspectorLineKind, InspectorLinePresentation, PathFieldKind, PluginAction, ProjectAction,
-    SkillAction, SkillKitsGuiApp, WorkbenchCellStyle, SIDEBAR_NAV_ROW_HEIGHT, SIDEBAR_WIDTH,
+    agent_actions, dashboard_overview_grid, icons, inspector_line_presentation, native_options,
+    path_validation_message, plugin_actions, project_actions, sidebar_grid_metrics,
+    sidebar_nav_label, skill_actions, status_badge_fill, workbench_cell_style,
+    workbench_row_accepts_keyboard_key, workbench_row_fill, AgentAction, InspectorLineKind,
+    InspectorLinePresentation, PathFieldKind, PluginAction, ProjectAction, SkillAction,
+    SkillKitsGuiApp, WorkbenchCellStyle, SIDEBAR_NAV_ROW_HEIGHT, SIDEBAR_WIDTH,
 };
 use tempfile::TempDir;
 
@@ -956,9 +957,15 @@ fn plugins_view_offers_enable_for_disabled_package() {
 #[test]
 fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
     let colors = UiColors::dark();
+    let sidebar_grid = sidebar_grid_metrics();
+    let dashboard_grid = dashboard_overview_grid(620.0);
 
     assert_eq!(SIDEBAR_WIDTH, 244.0);
     assert_eq!(SIDEBAR_NAV_ROW_HEIGHT, 36.0);
+    assert_eq!(sidebar_grid.row_outer_inset, 8.0);
+    assert_eq!(sidebar_grid.icon_x, 18.0);
+    assert_eq!(sidebar_grid.label_x, 46.0);
+    assert_eq!(sidebar_grid.section_label_x, 46.0);
     assert_eq!(
         sidebar_nav_label(NavigationView::Skills),
         icons::button_label(icons::SKILL, "Skill")
@@ -975,6 +982,11 @@ fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
     assert_eq!(workbench_row_fill(false, true, colors), colors.surface_2);
     assert_eq!(workbench_row_fill(true, false, colors), colors.surface_3);
     assert_eq!(workbench_row_fill(true, true, colors), colors.surface_3);
+    assert_eq!(dashboard_grid.heading_x, 12.0);
+    assert_eq!(dashboard_grid.divider_start_x, 12.0);
+    assert_eq!(dashboard_grid.row_label_x, 12.0);
+    assert_eq!(dashboard_grid.divider_end_x, 608.0);
+    assert_eq!(dashboard_grid.value_width, 132.0);
 
     assert_eq!(
         status_badge_fill("Enabled", false, false, colors),
@@ -986,6 +998,14 @@ fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
     );
     assert_eq!(
         status_badge_fill("Read-only", true, false, colors),
+        egui::Color32::TRANSPARENT
+    );
+    assert_eq!(
+        status_badge_fill("Enabled", true, false, colors),
+        egui::Color32::TRANSPARENT
+    );
+    assert_eq!(
+        status_badge_fill("Read-only", true, true, colors),
         colors.surface_2
     );
 }

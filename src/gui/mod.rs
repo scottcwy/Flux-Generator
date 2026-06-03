@@ -20,9 +20,35 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
 const MAIN_ROW_HEIGHT: f32 = 34.0;
+const MAIN_CONTENT_INSET: f32 = 12.0;
+const DASHBOARD_VALUE_WIDTH: f32 = 132.0;
 pub const SIDEBAR_WIDTH: f32 = 244.0;
 pub const SIDEBAR_NAV_ROW_HEIGHT: f32 = 36.0;
+const SIDEBAR_SCOPE_ROW_HEIGHT: f32 = 32.0;
+const SIDEBAR_ROW_OUTER_INSET: f32 = 8.0;
+const SIDEBAR_ROW_CONTENT_INSET: f32 = 18.0;
+const SIDEBAR_ICON_COLUMN_WIDTH: f32 = 28.0;
+const SIDEBAR_ROW_RADIUS: f32 = 5.0;
 const INSPECTOR_CONTROLS_HEIGHT: f32 = 184.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SidebarGridMetrics {
+    pub row_outer_inset: f32,
+    pub icon_x: f32,
+    pub label_x: f32,
+    pub section_label_x: f32,
+    pub row_radius: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DashboardOverviewGrid {
+    pub heading_x: f32,
+    pub divider_start_x: f32,
+    pub divider_end_x: f32,
+    pub row_label_x: f32,
+    pub label_width: f32,
+    pub value_width: f32,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillAction {
@@ -234,6 +260,31 @@ pub fn sidebar_nav_label(view: NavigationView) -> String {
     icons::button_label(icons::navigation_icon(view), view.title())
 }
 
+pub fn sidebar_grid_metrics() -> SidebarGridMetrics {
+    let label_x = SIDEBAR_ROW_CONTENT_INSET + SIDEBAR_ICON_COLUMN_WIDTH;
+    SidebarGridMetrics {
+        row_outer_inset: SIDEBAR_ROW_OUTER_INSET,
+        icon_x: SIDEBAR_ROW_CONTENT_INSET,
+        label_x,
+        section_label_x: label_x,
+        row_radius: SIDEBAR_ROW_RADIUS,
+    }
+}
+
+pub fn dashboard_overview_grid(available_width: f32) -> DashboardOverviewGrid {
+    let content_width = available_width.max(360.0);
+    let label_width =
+        (content_width - (MAIN_CONTENT_INSET * 2.0) - DASHBOARD_VALUE_WIDTH).max(160.0);
+    DashboardOverviewGrid {
+        heading_x: MAIN_CONTENT_INSET,
+        divider_start_x: MAIN_CONTENT_INSET,
+        divider_end_x: content_width - MAIN_CONTENT_INSET,
+        row_label_x: MAIN_CONTENT_INSET,
+        label_width,
+        value_width: DASHBOARD_VALUE_WIDTH,
+    }
+}
+
 pub fn workbench_row_fill(selected: bool, hovered: bool, colors: UiColors) -> egui::Color32 {
     if selected {
         colors.surface_3
@@ -250,8 +301,11 @@ pub fn status_badge_fill(
     selected: bool,
     colors: UiColors,
 ) -> egui::Color32 {
-    if selected || row_hovered {
+    if selected {
         return colors.surface_2;
+    }
+    if row_hovered {
+        return egui::Color32::TRANSPARENT;
     }
     match value {
         "Read-only" => colors.surface_1,
@@ -484,18 +538,20 @@ impl eframe::App for SkillKitsGuiApp {
                 }
                 ui.add_space(12.0);
                 ui.separator();
-                ui.label(egui::RichText::new("Scope").color(self.colors.ink_subtle));
-                if ui
-                    .selectable_label(
-                        matches!(self.model.active_scope, GuiScope::GlobalInventory),
-                        "Managed Inventory",
-                    )
-                    .clicked()
+                render_sidebar_section_label(ui, "Scope", self.colors);
+                if render_sidebar_scope_item(
+                    ui,
+                    icons::ASSET,
+                    "Managed Inventory",
+                    matches!(self.model.active_scope, GuiScope::GlobalInventory),
+                    self.colors,
+                )
+                .clicked()
                 {
                     self.model.select_scope(GuiScope::GlobalInventory);
                 }
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("Recent Projects").color(self.colors.ink_subtle));
+                render_sidebar_section_label(ui, "Recent Projects", self.colors);
                 let projects = self.model.recent_projects.clone();
                 egui::ScrollArea::vertical()
                     .id_salt("sidebar_recent_projects")
@@ -506,9 +562,14 @@ impl eframe::App for SkillKitsGuiApp {
                                 &self.model.active_scope,
                                 GuiScope::Project(path) if path == &project.path
                             );
-                            let response = ui
-                                .selectable_label(selected, &project.name)
-                                .on_hover_text(project.path.to_string());
+                            let response = render_sidebar_scope_item(
+                                ui,
+                                icons::PROJECT,
+                                &project.name,
+                                selected,
+                                self.colors,
+                            )
+                            .on_hover_text(project.path.to_string());
                             if response.clicked() {
                                 self.model.select_scope(GuiScope::Project(project.path));
                             }
@@ -631,23 +692,65 @@ fn render_sidebar_nav_item(
     selected: bool,
     colors: UiColors,
 ) -> egui::Response {
+    render_sidebar_grid_item(
+        ui,
+        icons::navigation_icon(view),
+        view.title(),
+        selected,
+        SIDEBAR_NAV_ROW_HEIGHT,
+        colors,
+    )
+    .on_hover_text(sidebar_nav_label(view))
+}
+
+fn render_sidebar_scope_item(
+    ui: &mut egui::Ui,
+    icon: &str,
+    label: &str,
+    selected: bool,
+    colors: UiColors,
+) -> egui::Response {
+    render_sidebar_grid_item(ui, icon, label, selected, SIDEBAR_SCOPE_ROW_HEIGHT, colors)
+}
+
+fn render_sidebar_section_label(ui: &mut egui::Ui, label: &str, colors: UiColors) {
+    let grid = sidebar_grid_metrics();
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.add_space(grid.section_label_x);
+        ui.label(
+            egui::RichText::new(label)
+                .color(colors.ink_subtle)
+                .size(12.0),
+        );
+    });
+    ui.add_space(4.0);
+}
+
+fn render_sidebar_grid_item(
+    ui: &mut egui::Ui,
+    icon: &str,
+    label: &str,
+    selected: bool,
+    row_height: f32,
+    colors: UiColors,
+) -> egui::Response {
+    let grid = sidebar_grid_metrics();
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, SIDEBAR_NAV_ROW_HEIGHT),
-        egui::Sense::click(),
-    );
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, row_height), egui::Sense::click());
     let fill = workbench_row_fill(selected, response.hovered(), colors);
     if fill != egui::Color32::TRANSPARENT {
         ui.painter().rect_filled(
-            rect.shrink2(egui::vec2(8.0, 2.0)),
-            egui::Rounding::same(5.0),
+            rect.shrink2(egui::vec2(grid.row_outer_inset, 2.0)),
+            egui::Rounding::same(grid.row_radius),
             fill,
         );
     }
     if response.has_focus() {
         ui.painter().rect_stroke(
-            rect.shrink2(egui::vec2(8.0, 2.0)),
-            egui::Rounding::same(5.0),
+            rect.shrink2(egui::vec2(grid.row_outer_inset, 2.0)),
+            egui::Rounding::same(grid.row_radius),
             egui::Stroke::new(1.0, colors.focus),
         );
     }
@@ -657,23 +760,22 @@ fn render_sidebar_nav_item(
     } else {
         colors.ink_muted
     };
-    let content_rect = rect.shrink2(egui::vec2(18.0, 0.0));
     ui.painter().text(
-        egui::pos2(content_rect.left(), content_rect.center().y),
+        egui::pos2(rect.left() + grid.icon_x, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        icons::navigation_icon(view),
+        icon,
         egui::FontId::proportional(13.0),
         text_color,
     );
     ui.painter().text(
-        egui::pos2(content_rect.left() + 28.0, content_rect.center().y),
+        egui::pos2(rect.left() + grid.label_x, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        view.title(),
+        label,
         egui::FontId::proportional(13.0),
         text_color,
     );
 
-    response.on_hover_text(sidebar_nav_label(view))
+    response
 }
 
 fn render_main(
@@ -683,11 +785,9 @@ fn render_main(
     colors: UiColors,
 ) {
     ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.heading(egui::RichText::new(&renderable.title).size(20.0));
-    });
+    render_main_heading(ui, &renderable.title, colors);
     ui.add_space(8.0);
-    ui.separator();
+    render_inset_divider(ui, colors);
     ui.add_space(4.0);
     if matches!(renderable.view, NavigationView::Skills) {
         render_skill_filters(ui, model, colors);
@@ -707,17 +807,40 @@ fn render_main(
     }
 }
 
-fn render_dashboard_overview(ui: &mut egui::Ui, renderable: &RenderableView, colors: UiColors) {
-    const INSET: f32 = 12.0;
-    const VALUE_WIDTH: f32 = 132.0;
+fn render_main_heading(ui: &mut egui::Ui, title: &str, colors: UiColors) {
+    let grid = dashboard_overview_grid(ui.available_width());
+    ui.horizontal(|ui| {
+        ui.add_space(grid.heading_x);
+        ui.heading(
+            egui::RichText::new(title)
+                .size(20.0)
+                .color(colors.ink)
+                .strong(),
+        );
+    });
+}
 
+fn render_inset_divider(ui: &mut egui::Ui, colors: UiColors) {
+    let grid = dashboard_overview_grid(ui.available_width());
+    let left = ui.min_rect().left();
+    let y = ui.cursor().top();
+    ui.painter().line_segment(
+        [
+            egui::pos2(left + grid.divider_start_x, y),
+            egui::pos2(left + grid.divider_end_x, y),
+        ],
+        egui::Stroke::new(1.0, colors.hairline),
+    );
+    ui.add_space(1.0);
+}
+
+fn render_dashboard_overview(ui: &mut egui::Ui, renderable: &RenderableView, colors: UiColors) {
     ui.add_space(4.0);
-    let content_width = ui.available_width().max(360.0);
-    let divider_start = ui.min_rect().left() + INSET;
-    let divider_end = ui.min_rect().left() + content_width - INSET;
+    let grid = dashboard_overview_grid(ui.available_width());
+    let left = ui.min_rect().left();
 
     ui.horizontal(|ui| {
-        ui.add_space(INSET);
+        ui.add_space(grid.heading_x);
         ui.label(
             egui::RichText::new("Overview")
                 .size(15.0)
@@ -728,22 +851,23 @@ fn render_dashboard_overview(ui: &mut egui::Ui, renderable: &RenderableView, col
     ui.add_space(6.0);
     let y = ui.cursor().top();
     ui.painter().line_segment(
-        [egui::pos2(divider_start, y), egui::pos2(divider_end, y)],
+        [
+            egui::pos2(left + grid.divider_start_x, y),
+            egui::pos2(left + grid.divider_end_x, y),
+        ],
         egui::Stroke::new(1.0, colors.hairline),
     );
     ui.add_space(8.0);
 
-    let label_width = (content_width - (INSET * 2.0) - VALUE_WIDTH).max(160.0);
     for row in &renderable.main_rows {
-        render_dashboard_overview_row(ui, row, label_width, VALUE_WIDTH, colors);
+        render_dashboard_overview_row(ui, row, grid, colors);
     }
 }
 
 fn render_dashboard_overview_row(
     ui: &mut egui::Ui,
     row: &RenderRow,
-    label_width: f32,
-    value_width: f32,
+    grid: DashboardOverviewGrid,
     colors: UiColors,
 ) {
     let row_width = ui.available_width();
@@ -760,17 +884,17 @@ fn render_dashboard_overview_row(
 
     let mut row_ui = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(12.0, 0.0)))
+            .max_rect(rect.shrink2(egui::vec2(grid.row_label_x, 0.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     let label = row.cells.first().map(String::as_str).unwrap_or("-");
     let value = row.cells.get(1).map(String::as_str).unwrap_or("-");
     row_ui.add_sized(
-        [label_width, MAIN_ROW_HEIGHT],
+        [grid.label_width, MAIN_ROW_HEIGHT],
         egui::Label::new(egui::RichText::new(label).color(colors.ink_muted)).truncate(),
     );
     row_ui.add_sized(
-        [value_width, MAIN_ROW_HEIGHT],
+        [grid.value_width, MAIN_ROW_HEIGHT],
         egui::Label::new(egui::RichText::new(value).color(colors.ink).strong()).truncate(),
     );
     response.on_hover_text(format!("{label}: {value}"));
