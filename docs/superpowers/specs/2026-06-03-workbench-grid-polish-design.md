@@ -1,6 +1,6 @@
 # Workbench Grid Polish Design
 
-Status: draft for user review.
+Status: frozen for implementation.
 
 ## Purpose
 
@@ -83,7 +83,22 @@ Create a small section rendering helper for Dashboard rows and groups:
 
 Dashboard should continue to avoid large metric cards. Use compact summary rows and section groups.
 
-### 3. More Immediate Hover Feedback
+### 3. Unified Main Content Grid
+
+All primary content in the main pane should derive from one content grid helper.
+
+Rules:
+
+- use `MAIN_CONTENT_INSET = 12.0` as the single horizontal inset
+- page title, divider, Actions strip, filter strip, Dashboard section heading, Dashboard rows, table header, table rows, and row hover fills align to the same left edge
+- divider and row hover fills use the same right edge
+- table header first column and table row first cell share the same x origin
+- Actions and filters sit inside the main content inset, not as free-floating toolbar lines
+- empty-state copy starts on the same content left edge
+
+This is a visual/layout polish only. It must not change CLI behavior, Skill enable/disable behavior, plugin enable/disable behavior, or row selection semantics.
+
+### 4. More Immediate Hover Feedback
 
 Use explicit row painting where the current default widget hover is too soft or too broad.
 
@@ -95,7 +110,7 @@ Rules:
 - no secondary hover fill inside badges that makes both row and badge compete
 - disabled/read-only text uses `ink_subtle` or `ink_tertiary`, not a hover-like background
 
-### 4. Skill View Read-Only Treatment
+### 5. Skill View Read-Only Treatment
 
 Adjust status badge and row interaction so `Read-only` starts visually quiet:
 
@@ -126,6 +141,7 @@ Suggested extraction:
 - `render_sidebar_nav_item(...)`
 - `render_sidebar_scope_item(...)`
 - `render_dashboard_section(...)`
+- `workbench_content_grid(...)`
 - `row_fill(selected, hovered, colors)`
 - `status_badge_surface(value, row_hovered, selected, colors)`
 
@@ -138,6 +154,7 @@ Add or update tests for pure helper behavior where possible:
 - sidebar nav labels preserve `Dashboard`, `Skill`, `Agent`, `Project`
 - hover/selected fill precedence is selected over hovered
 - `Read-only` status maps to read-only icon and quiet status category
+- main content helper returns one shared inset and right edge for heading, divider, table header, table rows, and Dashboard rows
 - Dashboard section helper preserves stable section ordering if represented in renderable data
 
 Manual verification:
@@ -152,6 +169,7 @@ Manual verification:
 
 - Sidebar primary navigation feels like stable tab navigation with strict icon and label alignment.
 - Dashboard dividers and section content align to one visible grid.
+- Main-pane title, divider, actions, filters, table header, table rows, and hover fills use one shared content inset.
 - Dashboard hover feedback is immediate and local to the hovered item.
 - Skill row hover no longer makes unrelated left/right areas look active.
 - Read-only default state is quieter than hover.

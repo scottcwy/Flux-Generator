@@ -21,7 +21,8 @@ use skill_kits::gui::state::{
 use skill_kits::gui::{
     agent_actions, dashboard_overview_grid, icons, inspector_line_presentation, native_options,
     path_validation_message, plugin_actions, project_actions, sidebar_grid_metrics,
-    sidebar_nav_label, skill_actions, status_badge_fill, workbench_cell_style,
+    sidebar_nav_label, skill_actions, status_badge_fill, status_badge_stroke, workbench_cell_style,
+    workbench_chrome_top_inset, workbench_content_grid, workbench_renders_inspector_panel,
     workbench_row_accepts_keyboard_key, workbench_row_fill, AgentAction, InspectorLineKind,
     InspectorLinePresentation, PathFieldKind, PluginAction, ProjectAction, SkillAction,
     SkillKitsGuiApp, WorkbenchCellStyle, SIDEBAR_NAV_ROW_HEIGHT, SIDEBAR_WIDTH,
@@ -181,6 +182,10 @@ fn gui_icons_map_navigation_actions_and_status_without_mixing_plugin_toggles() {
         icons::navigation_icon(NavigationView::Projects),
         icons::PROJECT
     );
+    assert_eq!(icons::PROJECT, icons::BROWSE);
+    assert_ne!(icons::PROJECT, "\u{f802}");
+    assert_eq!(icons::BACK, "\u{f060}");
+    assert_eq!(icons::FORWARD, "\u{f061}");
 
     assert_eq!(
         icons::skill_action_icon(SkillAction::ScanAgentSpaces),
@@ -210,6 +215,40 @@ fn gui_icons_map_navigation_actions_and_status_without_mixing_plugin_toggles() {
         icons::button_label(icons::REFRESH, "Refresh"),
         "\u{f021} Refresh"
     );
+}
+
+#[test]
+fn gui_view_history_moves_backward_and_forward_without_mutating_actions() {
+    let mut model = GuiModel::default();
+    assert_eq!(model.active_view, NavigationView::Dashboard);
+    assert!(!model.can_go_back());
+    assert!(!model.can_go_forward());
+
+    model.navigate(NavigationView::Skills);
+    model.navigate(NavigationView::Projects);
+    assert_eq!(model.active_view, NavigationView::Projects);
+    assert!(model.can_go_back());
+    assert!(!model.can_go_forward());
+
+    assert_eq!(model.go_back(), Some(NavigationView::Skills));
+    assert_eq!(model.active_view, NavigationView::Skills);
+    assert!(model.can_go_back());
+    assert!(model.can_go_forward());
+
+    assert_eq!(model.go_back(), Some(NavigationView::Dashboard));
+    assert_eq!(model.active_view, NavigationView::Dashboard);
+    assert!(!model.can_go_back());
+    assert!(model.can_go_forward());
+
+    assert_eq!(model.go_forward(), Some(NavigationView::Skills));
+    assert_eq!(model.active_view, NavigationView::Skills);
+    assert!(model.can_go_back());
+    assert!(model.can_go_forward());
+
+    model.navigate(NavigationView::Agents);
+    assert_eq!(model.active_view, NavigationView::Agents);
+    assert!(model.can_go_back());
+    assert!(!model.can_go_forward());
 }
 
 #[test]
@@ -851,7 +890,7 @@ fn navigation_titles_match_frozen_agent_space_shape() {
 }
 
 #[test]
-fn plugins_view_lists_packages_and_read_only_capabilities() {
+fn plugins_view_lists_packages_as_control_units_and_opens_skill_detail_view() {
     let temp_dir = TempDir::new().unwrap();
     let paths = test_paths(&temp_dir);
     let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
@@ -872,15 +911,7 @@ fn plugins_view_lists_packages_and_read_only_capabilities() {
 
     assert_eq!(
         renderable.columns,
-        vec![
-            "Plugin",
-            "Provider",
-            "Agent",
-            "Status",
-            "Capabilities",
-            "Path",
-            "Updated"
-        ]
+        vec!["Plugin", "Provider", "Agent", "Status", "Skills", "Path", "Updated"]
     );
     assert_eq!(
         renderable
@@ -888,14 +919,32 @@ fn plugins_view_lists_packages_and_read_only_capabilities() {
             .iter()
             .map(|row| row.cells[0].as_str())
             .collect::<Vec<_>>(),
-        vec!["GitHub Tools", "GitHub Skill", "review"]
+        vec!["GitHub Tools"]
     );
+    assert_eq!(renderable.main_rows[0].cells[4], "1 Skill");
 
     let package_row_id = renderable.main_rows[0].id.clone();
     assert!(model.select_render_row(&package_row_id));
+    let renderable = model.renderable_view();
+    assert_eq!(renderable.title, "Plugins / GitHub Tools");
+    assert_eq!(renderable.columns, vec!["Skill", "Status", "Kind", "Path"]);
+    assert_eq!(
+        renderable
+            .main_rows
+            .iter()
+            .map(|row| row.cells[0].as_str())
+            .collect::<Vec<_>>(),
+        vec!["GitHub Skill"]
+    );
+    assert_eq!(renderable.main_rows[0].cells[1], "Enabled");
+    assert_eq!(renderable.main_rows[0].cells[2], "Skill");
     assert_eq!(
         plugin_actions(&model),
-        vec![PluginAction::ScanPlugins, PluginAction::Disable]
+        vec![
+            PluginAction::BackToPlugins,
+            PluginAction::ScanPlugins,
+            PluginAction::Disable
+        ]
     );
     let summary = section_lines(&model, "Summary");
     assert!(summary.contains(&"Plugin key github@openai-curated".to_string()));
@@ -906,20 +955,122 @@ fn plugins_view_lists_packages_and_read_only_capabilities() {
             .to_string()
     ));
 
-    let capability_row_id = model
-        .renderable_view()
-        .main_rows
-        .iter()
-        .find(|row| row.cells[0] == "GitHub Skill")
-        .unwrap()
-        .id
-        .clone();
+    let capability_row_id = renderable.main_rows[0].id.clone();
     assert!(model.select_render_row(&capability_row_id));
-    assert_eq!(plugin_actions(&model), vec![PluginAction::ScanPlugins]);
+    assert_eq!(
+        plugin_actions(&model),
+        vec![
+            PluginAction::BackToPlugins,
+            PluginAction::ScanPlugins,
+            PluginAction::Disable
+        ]
+    );
     assert!(section_lines(&model, "State").contains(
         &"This Skill is bundled by a Codex plugin. It is not a native Agent Space Skill and cannot be enabled or disabled by renaming SKILL.md."
             .to_string()
     ));
+    assert_eq!(
+        plugin_actions(&model),
+        vec![
+            PluginAction::BackToPlugins,
+            PluginAction::ScanPlugins,
+            PluginAction::Disable
+        ]
+    );
+    model.clear_plugin_selection();
+    let renderable = model.renderable_view();
+    assert_eq!(renderable.title, "Plugins");
+    assert_eq!(
+        renderable
+            .main_rows
+            .iter()
+            .map(|row| row.cells[0].as_str())
+            .collect::<Vec<_>>(),
+        vec!["GitHub Tools"]
+    );
+}
+
+#[test]
+fn plugin_skill_detail_rows_inherit_disabled_parent_status_without_mutating_skill_files() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    let package = write_plugin_package(&home, "openai-bundled", "browser", "1.0.0", "Browser");
+    let skill_file = package.join("skills/browser-skill/SKILL.md");
+    write_file(&skill_file, "# Browser Skill\n");
+    write_file(
+        &home.join(".codex/config.toml"),
+        "[plugins.\"browser@openai-bundled\"]\nenabled = false\n",
+    );
+
+    let mut model = GuiModel::load_with_home_dir(&paths, home.clone()).unwrap();
+    model.navigate(NavigationView::Plugins);
+    let row_id = model.renderable_view().main_rows[0].id.clone();
+    assert!(model.select_render_row(&row_id));
+
+    let renderable = model.renderable_view();
+    assert_eq!(renderable.title, "Plugins / Browser");
+    assert_eq!(
+        renderable
+            .main_rows
+            .iter()
+            .map(|row| row.cells[1].as_str())
+            .collect::<Vec<_>>(),
+        vec!["Disabled"]
+    );
+    assert!(skill_file.exists());
+    assert!(!package
+        .join("skills/browser-skill/SKILL.md.disabled")
+        .exists());
+}
+
+#[test]
+fn enabling_disabled_plugin_updates_skill_detail_rows_through_plugin_config_only() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    let package = write_plugin_package(&home, "openai-bundled", "browser", "1.0.0", "Browser");
+    let skill_file = package.join("skills/browser-skill/SKILL.md");
+    write_file(&skill_file, "# Browser Skill\n");
+    let codex_config = home.join(".codex/config.toml");
+    write_file(
+        &codex_config,
+        "[plugins.\"browser@openai-bundled\"]\nenabled = false\n",
+    );
+
+    let mut model = GuiModel::load_with_home_dir(&paths, home.clone()).unwrap();
+    model.navigate(NavigationView::Plugins);
+    let row_id = model.renderable_view().main_rows[0].id.clone();
+    assert!(model.select_render_row(&row_id));
+    assert_eq!(model.renderable_view().main_rows[0].cells[1], "Disabled");
+    assert_eq!(
+        model.request_enable_selected_plugin(),
+        Some(GuiActionIntent::EnablePlugin {
+            plugin_id: row_id.clone()
+        })
+    );
+
+    let controller = GuiController::with_home_dir(paths, home);
+    assert!(model.execute_next_intent(&controller).unwrap().is_some());
+
+    let renderable = model.renderable_view();
+    assert_eq!(renderable.title, "Plugins / Browser");
+    assert_eq!(renderable.main_rows[0].cells[1], "Enabled");
+    assert!(std::fs::read_to_string(&codex_config)
+        .unwrap()
+        .contains("enabled = true"));
+    assert!(skill_file.exists());
+    assert!(!package
+        .join("skills/browser-skill/SKILL.md.disabled")
+        .exists());
 }
 
 #[test]
@@ -944,7 +1095,11 @@ fn plugins_view_offers_enable_for_disabled_package() {
 
     assert_eq!(
         plugin_actions(&model),
-        vec![PluginAction::ScanPlugins, PluginAction::Enable]
+        vec![
+            PluginAction::BackToPlugins,
+            PluginAction::ScanPlugins,
+            PluginAction::Enable
+        ]
     );
     assert_eq!(
         model.request_enable_selected_plugin(),
@@ -958,6 +1113,7 @@ fn plugins_view_offers_enable_for_disabled_package() {
 fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
     let colors = UiColors::dark();
     let sidebar_grid = sidebar_grid_metrics();
+    let content_grid = workbench_content_grid(620.0);
     let dashboard_grid = dashboard_overview_grid(620.0);
 
     assert_eq!(SIDEBAR_WIDTH, 244.0);
@@ -979,22 +1135,31 @@ fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
         workbench_row_fill(false, false, colors),
         egui::Color32::TRANSPARENT
     );
-    assert_eq!(workbench_row_fill(false, true, colors), colors.surface_2);
+    assert_eq!(
+        workbench_row_fill(false, true, colors),
+        egui::Color32::from_rgb(0x13, 0x14, 0x18)
+    );
+    assert_ne!(workbench_row_fill(false, true, colors), colors.surface_2);
     assert_eq!(workbench_row_fill(true, false, colors), colors.surface_3);
     assert_eq!(workbench_row_fill(true, true, colors), colors.surface_3);
-    assert_eq!(dashboard_grid.heading_x, 12.0);
-    assert_eq!(dashboard_grid.divider_start_x, 12.0);
-    assert_eq!(dashboard_grid.row_label_x, 12.0);
-    assert_eq!(dashboard_grid.divider_end_x, 608.0);
+    assert_eq!(content_grid.inset, 12.0);
+    assert_eq!(content_grid.left, 12.0);
+    assert_eq!(content_grid.right, 608.0);
+    assert_eq!(content_grid.width, 596.0);
+    assert_eq!(content_grid.row_rounding, 5.0);
+    assert_eq!(dashboard_grid.heading_x, content_grid.left);
+    assert_eq!(dashboard_grid.divider_start_x, content_grid.left);
+    assert_eq!(dashboard_grid.row_label_x, content_grid.left);
+    assert_eq!(dashboard_grid.divider_end_x, content_grid.right);
     assert_eq!(dashboard_grid.value_width, 132.0);
 
     assert_eq!(
         status_badge_fill("Enabled", false, false, colors),
-        colors.surface_2
+        egui::Color32::TRANSPARENT
     );
     assert_eq!(
         status_badge_fill("Read-only", false, false, colors),
-        colors.surface_1
+        egui::Color32::TRANSPARENT
     );
     assert_eq!(
         status_badge_fill("Read-only", true, false, colors),
@@ -1006,7 +1171,19 @@ fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
     );
     assert_eq!(
         status_badge_fill("Read-only", true, true, colors),
-        colors.surface_2
+        colors.surface_1
+    );
+    assert_eq!(
+        status_badge_stroke("Enabled", false, false, colors),
+        egui::Stroke::new(1.0, colors.hairline)
+    );
+    assert_eq!(
+        status_badge_stroke("Enabled", true, false, colors),
+        egui::Stroke::new(1.0, colors.hairline_strong)
+    );
+    assert_eq!(
+        status_badge_stroke("Read-only", true, true, colors),
+        egui::Stroke::new(1.0, colors.hairline_strong)
     );
 }
 
@@ -1023,6 +1200,21 @@ fn native_gui_options_integrate_dark_macos_title_area() {
     assert_eq!(options.viewport.title_shown, Some(false));
     assert_eq!(options.viewport.titlebar_buttons_shown, Some(true));
     assert_ne!(options.viewport.decorations, Some(false));
+}
+
+#[test]
+fn workbench_shell_reserves_space_for_macos_titlebar_buttons() {
+    let inset = workbench_chrome_top_inset();
+    if cfg!(target_os = "macos") {
+        assert!(inset >= 28.0);
+    } else {
+        assert_eq!(inset, 0.0);
+    }
+}
+
+#[test]
+fn workbench_shell_does_not_render_a_persistent_inspector_panel() {
+    assert!(!workbench_renders_inspector_panel());
 }
 
 #[test]

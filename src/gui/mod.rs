@@ -29,7 +29,7 @@ const SIDEBAR_ROW_OUTER_INSET: f32 = 8.0;
 const SIDEBAR_ROW_CONTENT_INSET: f32 = 18.0;
 const SIDEBAR_ICON_COLUMN_WIDTH: f32 = 28.0;
 const SIDEBAR_ROW_RADIUS: f32 = 5.0;
-const INSPECTOR_CONTROLS_HEIGHT: f32 = 184.0;
+const MACOS_CHROME_TOP_INSET: f32 = 30.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SidebarGridMetrics {
@@ -50,6 +50,15 @@ pub struct DashboardOverviewGrid {
     pub value_width: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorkbenchContentGrid {
+    pub inset: f32,
+    pub left: f32,
+    pub right: f32,
+    pub width: f32,
+    pub row_rounding: f32,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillAction {
     ScanAgentSpaces,
@@ -59,6 +68,7 @@ pub enum SkillAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PluginAction {
+    BackToPlugins,
     ScanPlugins,
     Enable,
     Disable,
@@ -163,6 +173,7 @@ impl SkillAction {
 impl PluginAction {
     fn label(self) -> &'static str {
         match self {
+            Self::BackToPlugins => "Back to Plugins",
             Self::ScanPlugins => "Scan Plugins",
             Self::Enable => "Enable Plugin",
             Self::Disable => "Disable Plugin",
@@ -217,10 +228,11 @@ pub fn project_actions(model: &GuiModel) -> Vec<ProjectAction> {
 }
 
 pub fn plugin_actions(model: &GuiModel) -> Vec<PluginAction> {
-    let mut actions = vec![PluginAction::ScanPlugins];
-    if model.selected_plugin_capability().is_some() {
-        return actions;
+    let mut actions = Vec::new();
+    if model.selected_plugin().is_some() {
+        actions.push(PluginAction::BackToPlugins);
     }
+    actions.push(PluginAction::ScanPlugins);
     let Some(plugin) = model.selected_plugin() else {
         return actions;
     };
@@ -256,6 +268,18 @@ pub fn workbench_row_accepts_keyboard_key(key: egui::Key) -> bool {
     matches!(key, egui::Key::Enter | egui::Key::Space)
 }
 
+pub fn workbench_chrome_top_inset() -> f32 {
+    if cfg!(target_os = "macos") {
+        MACOS_CHROME_TOP_INSET
+    } else {
+        0.0
+    }
+}
+
+pub fn workbench_renders_inspector_panel() -> bool {
+    false
+}
+
 pub fn sidebar_nav_label(view: NavigationView) -> String {
     icons::button_label(icons::navigation_icon(view), view.title())
 }
@@ -272,16 +296,28 @@ pub fn sidebar_grid_metrics() -> SidebarGridMetrics {
 }
 
 pub fn dashboard_overview_grid(available_width: f32) -> DashboardOverviewGrid {
-    let content_width = available_width.max(360.0);
-    let label_width =
-        (content_width - (MAIN_CONTENT_INSET * 2.0) - DASHBOARD_VALUE_WIDTH).max(160.0);
+    let content_grid = workbench_content_grid(available_width);
+    let label_width = (content_grid.width - DASHBOARD_VALUE_WIDTH).max(160.0);
     DashboardOverviewGrid {
-        heading_x: MAIN_CONTENT_INSET,
-        divider_start_x: MAIN_CONTENT_INSET,
-        divider_end_x: content_width - MAIN_CONTENT_INSET,
-        row_label_x: MAIN_CONTENT_INSET,
+        heading_x: content_grid.left,
+        divider_start_x: content_grid.left,
+        divider_end_x: content_grid.right,
+        row_label_x: content_grid.left,
         label_width,
         value_width: DASHBOARD_VALUE_WIDTH,
+    }
+}
+
+pub fn workbench_content_grid(available_width: f32) -> WorkbenchContentGrid {
+    let outer_width = available_width.max(360.0);
+    let left = MAIN_CONTENT_INSET;
+    let right = outer_width - MAIN_CONTENT_INSET;
+    WorkbenchContentGrid {
+        inset: MAIN_CONTENT_INSET,
+        left,
+        right,
+        width: right - left,
+        row_rounding: 5.0,
     }
 }
 
@@ -289,7 +325,7 @@ pub fn workbench_row_fill(selected: bool, hovered: bool, colors: UiColors) -> eg
     if selected {
         colors.surface_3
     } else if hovered {
-        colors.surface_2
+        egui::Color32::from_rgb(0x13, 0x14, 0x18)
     } else {
         egui::Color32::TRANSPARENT
     }
@@ -302,14 +338,23 @@ pub fn status_badge_fill(
     colors: UiColors,
 ) -> egui::Color32 {
     if selected {
-        return colors.surface_2;
+        return colors.surface_1;
     }
-    if row_hovered {
-        return egui::Color32::TRANSPARENT;
-    }
-    match value {
-        "Read-only" => colors.surface_1,
-        _ => colors.surface_2,
+    let _ = value;
+    let _ = row_hovered;
+    egui::Color32::TRANSPARENT
+}
+
+pub fn status_badge_stroke(
+    _value: &str,
+    row_hovered: bool,
+    selected: bool,
+    colors: UiColors,
+) -> egui::Stroke {
+    if selected || row_hovered {
+        egui::Stroke::new(1.0, colors.hairline_strong)
+    } else {
+        egui::Stroke::new(1.0, colors.hairline)
     }
 }
 
@@ -496,12 +541,31 @@ impl eframe::App for SkillKitsGuiApp {
             ctx.request_repaint();
         }
 
+        let chrome_top_inset = workbench_chrome_top_inset();
+        if chrome_top_inset > 0.0 {
+            egui::TopBottomPanel::top("macos_chrome_spacer")
+                .frame(egui::Frame::none().fill(self.colors.surface_1))
+                .exact_height(chrome_top_inset)
+                .show(ctx, |_ui| {});
+        }
+
         egui::TopBottomPanel::top("top_bar")
             .frame(egui::Frame::none().fill(self.colors.surface_1))
             .exact_height(42.0)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.label(egui::RichText::new("Skill-kits").strong());
+                    ui.add_enabled(self.model.can_go_back(), egui::Button::new(icons::BACK))
+                        .on_hover_text("Back")
+                        .clicked()
+                        .then(|| self.model.go_back());
+                    ui.add_enabled(
+                        self.model.can_go_forward(),
+                        egui::Button::new(icons::FORWARD),
+                    )
+                    .on_hover_text("Forward")
+                    .clicked()
+                    .then(|| self.model.go_forward());
                     ui.separator();
                     ui.label(scope_label(&self.model.active_scope));
                     if ui
@@ -575,31 +639,6 @@ impl eframe::App for SkillKitsGuiApp {
                             }
                         }
                     });
-            });
-
-        egui::SidePanel::right("inspector")
-            .frame(egui::Frame::none().fill(self.colors.surface_1))
-            .resizable(false)
-            .exact_width(344.0)
-            .show(ctx, |ui| {
-                let renderable = self.model.renderable_view();
-                let controls_height = INSPECTOR_CONTROLS_HEIGHT
-                    .min(ui.available_height() * 0.45)
-                    .max(112.0);
-                let inspector_height = (ui.available_height() - controls_height).max(96.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), inspector_height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("inspector_scroll")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                render_inspector(ui, &renderable, self.colors);
-                            });
-                    },
-                );
-                render_action_controls(ui, &mut self.model, self.colors);
             });
 
         egui::CentralPanel::default()
@@ -789,6 +828,7 @@ fn render_main(
     ui.add_space(8.0);
     render_inset_divider(ui, colors);
     ui.add_space(4.0);
+    render_action_controls(ui, model, colors);
     if matches!(renderable.view, NavigationView::Skills) {
         render_skill_filters(ui, model, colors);
         ui.add_space(8.0);
@@ -796,10 +836,14 @@ fn render_main(
 
     if renderable.main_rows.is_empty() {
         ui.add_space(20.0);
-        ui.label(
-            egui::RichText::new(renderable.empty_message.unwrap_or("No rows"))
-                .color(colors.ink_subtle),
-        );
+        let grid = workbench_content_grid(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.add_space(grid.left);
+            ui.label(
+                egui::RichText::new(renderable.empty_message.unwrap_or("No rows"))
+                    .color(colors.ink_subtle),
+            );
+        });
     } else if matches!(renderable.view, NavigationView::Dashboard) {
         render_dashboard_overview(ui, renderable, colors);
     } else {
@@ -821,13 +865,17 @@ fn render_main_heading(ui: &mut egui::Ui, title: &str, colors: UiColors) {
 }
 
 fn render_inset_divider(ui: &mut egui::Ui, colors: UiColors) {
-    let grid = dashboard_overview_grid(ui.available_width());
+    render_inset_divider_with_width(ui, ui.available_width(), colors);
+}
+
+fn render_inset_divider_with_width(ui: &mut egui::Ui, width: f32, colors: UiColors) {
+    let grid = workbench_content_grid(width);
     let left = ui.min_rect().left();
     let y = ui.cursor().top();
     ui.painter().line_segment(
         [
-            egui::pos2(left + grid.divider_start_x, y),
-            egui::pos2(left + grid.divider_end_x, y),
+            egui::pos2(left + grid.left, y),
+            egui::pos2(left + grid.right, y),
         ],
         egui::Stroke::new(1.0, colors.hairline),
     );
@@ -874,11 +922,15 @@ fn render_dashboard_overview_row(
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(row_width, MAIN_ROW_HEIGHT), egui::Sense::hover());
     let fill = workbench_row_fill(false, response.hovered(), colors);
+    let hover_alpha = ui.ctx().animate_bool_responsive(
+        ui.id().with(("dashboard_row_hover", row.id.as_str())),
+        response.hovered(),
+    );
     if fill != egui::Color32::TRANSPARENT {
         ui.painter().rect_filled(
-            rect.shrink2(egui::vec2(8.0, 0.0)),
-            egui::Rounding::same(5.0),
-            fill,
+            rect.shrink2(egui::vec2(grid.row_label_x, 0.0)),
+            egui::Rounding::same(workbench_content_grid(row_width).row_rounding),
+            fade_color(fill, hover_alpha),
         );
     }
 
@@ -911,9 +963,12 @@ fn render_workbench_table(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let widths = table_column_widths(&renderable.columns);
-            let table_width: f32 = widths.iter().sum::<f32>() + 12.0;
+            let viewport_width = ui.available_width();
+            let content_grid = workbench_content_grid(viewport_width);
+            let table_width: f32 =
+                (widths.iter().sum::<f32>() + (content_grid.inset * 2.0)).max(viewport_width);
             render_table_header(ui, &renderable.columns, &widths, colors);
-            ui.separator();
+            render_inset_divider_with_width(ui, table_width, colors);
             egui::ScrollArea::vertical()
                 .id_salt(format!("main_table_vertical_{:?}", renderable.view))
                 .auto_shrink([false, false])
@@ -926,8 +981,9 @@ fn render_workbench_table(
 }
 
 fn render_table_header(ui: &mut egui::Ui, columns: &[String], widths: &[f32], colors: UiColors) {
+    let grid = workbench_content_grid(ui.available_width());
     ui.horizontal(|ui| {
-        ui.add_space(8.0);
+        ui.add_space(grid.left);
         for (column, width) in columns.iter().zip(widths.iter()) {
             ui.add_sized(
                 [*width, 22.0],
@@ -953,27 +1009,39 @@ fn render_table_row(
     colors: UiColors,
 ) {
     let selected = is_render_row_selected(model, renderable.view, &row.id);
+    let grid = workbench_content_grid(table_width);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(table_width, MAIN_ROW_HEIGHT),
         egui::Sense::click(),
     );
     let hovered = response.hovered() || response.has_focus();
     let fill = workbench_row_fill(selected, hovered, colors);
+    let hover_alpha = if selected {
+        1.0
+    } else {
+        ui.ctx().animate_bool_responsive(
+            ui.id().with(("workbench_row_hover", row.id.as_str())),
+            hovered,
+        )
+    };
     if fill != egui::Color32::TRANSPARENT {
-        ui.painter()
-            .rect_filled(rect, egui::Rounding::same(5.0), fill);
+        ui.painter().rect_filled(
+            rect.shrink2(egui::vec2(grid.inset, 0.0)),
+            egui::Rounding::same(grid.row_rounding),
+            fade_color(fill, hover_alpha),
+        );
     }
     if response.has_focus() {
         ui.painter().rect_stroke(
-            rect.shrink(1.0),
-            egui::Rounding::same(5.0),
+            rect.shrink2(egui::vec2(grid.inset, 0.0)).shrink(1.0),
+            egui::Rounding::same(grid.row_rounding),
             egui::Stroke::new(1.0, colors.focus),
         );
     }
 
     let mut row_ui = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(8.0, 0.0)))
+            .max_rect(rect.shrink2(egui::vec2(grid.inset, 0.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     for ((cell, column), width) in row
@@ -1051,6 +1119,7 @@ fn render_status_badge(
     let text_color = status_color(value, colors);
     egui::Frame::none()
         .fill(status_badge_fill(value, row_hovered, selected, colors))
+        .stroke(status_badge_stroke(value, row_hovered, selected, colors))
         .rounding(egui::Rounding::same(3.0))
         .inner_margin(egui::Margin::symmetric(7.0, 2.0))
         .show(ui, |ui| {
@@ -1064,6 +1133,14 @@ fn render_status_badge(
             });
         })
         .response
+}
+
+fn fade_color(color: egui::Color32, factor: f32) -> egui::Color32 {
+    if color == egui::Color32::TRANSPARENT {
+        return color;
+    }
+    let alpha = (255.0 * factor.clamp(0.0, 1.0)).round() as u8;
+    egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
 }
 
 fn status_color(value: &str, colors: UiColors) -> egui::Color32 {
@@ -1120,7 +1197,9 @@ fn is_render_row_selected(model: &GuiModel, view: NavigationView, row_id: &str) 
 }
 
 fn render_skill_filters(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColors) {
+    let grid = workbench_content_grid(ui.available_width());
     ui.horizontal(|ui| {
+        ui.add_space(grid.left);
         ui.label(egui::RichText::new("Agent").color(colors.ink_subtle));
         let agent_text = model
             .skill_agent_filter()
@@ -1201,209 +1280,84 @@ fn render_skill_filters(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColor
     });
 }
 
-fn render_inspector(ui: &mut egui::Ui, renderable: &RenderableView, colors: UiColors) {
-    ui.add_space(10.0);
-    ui.label(egui::RichText::new("Inspector").size(15.0).strong());
-    ui.add_space(8.0);
-    for section in &renderable.inspector_sections {
-        ui.separator();
-        ui.add_space(8.0);
-        ui.label(egui::RichText::new(&section.title).strong());
-        ui.add_space(4.0);
-        for line in &section.lines {
-            render_inspector_line(ui, line, colors);
-        }
-        ui.add_space(8.0);
-    }
-}
-
-fn render_inspector_line(ui: &mut egui::Ui, line: &str, colors: UiColors) {
-    let presentation = inspector_line_presentation(line);
-    match presentation.kind {
-        InspectorLineKind::Path => render_inspector_path_line(ui, &presentation, colors),
-        InspectorLineKind::Mono => render_inspector_key_value(
-            ui,
-            &presentation,
-            egui::RichText::new(&presentation.value)
-                .monospace()
-                .color(colors.ink_subtle)
-                .size(12.0),
-            colors,
-        ),
-        InspectorLineKind::StatusBadge => {
-            if presentation.label.is_empty() {
-                render_status_badge(ui, &presentation.value, false, false, colors);
-            } else {
-                ui.horizontal(|ui| {
-                    render_inspector_key(ui, &presentation.label, colors);
-                    render_status_badge(ui, &presentation.value, false, false, colors);
-                });
-            }
-        }
-        InspectorLineKind::Text => {
-            if presentation.label.is_empty() {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(&presentation.value)
-                            .color(colors.ink_muted)
-                            .size(13.0),
-                    )
-                    .wrap(),
-                );
-            } else {
-                render_inspector_key_value(
-                    ui,
-                    &presentation,
-                    egui::RichText::new(&presentation.value)
-                        .color(colors.ink_muted)
-                        .size(13.0),
-                    colors,
-                );
-            }
-        }
-    }
-}
-
-fn render_inspector_path_line(
-    ui: &mut egui::Ui,
-    presentation: &InspectorLinePresentation,
-    colors: UiColors,
-) {
-    ui.horizontal(|ui| {
-        render_inspector_key(ui, &presentation.label, colors);
-        let response = ui.add(
-            egui::Label::new(
-                egui::RichText::new(&presentation.value)
-                    .monospace()
-                    .color(colors.ink_subtle)
-                    .size(12.0),
-            )
-            .wrap(),
-        );
-        response.on_hover_text(&presentation.value);
-        if ui
-            .small_button(icons::button_label(icons::COPY, "Copy"))
-            .on_hover_text("Copy path")
-            .clicked()
-        {
-            ui.output_mut(|output| output.copied_text = presentation.value.clone());
-        }
-        let can_reveal = path_exists(&presentation.value);
-        if ui
-            .add_enabled(
-                can_reveal,
-                egui::Button::new(icons::button_label(icons::REVEAL, "Reveal")).small(),
-            )
-            .on_hover_text("Reveal in Finder")
-            .clicked()
-        {
-            reveal_path(&presentation.value);
-        }
-    });
-}
-
-fn render_inspector_key_value(
-    ui: &mut egui::Ui,
-    presentation: &InspectorLinePresentation,
-    value: egui::RichText,
-    colors: UiColors,
-) {
-    ui.horizontal_wrapped(|ui| {
-        render_inspector_key(ui, &presentation.label, colors);
-        ui.label(value);
-    });
-}
-
-fn render_inspector_key(ui: &mut egui::Ui, label: &str, colors: UiColors) {
-    if label.is_empty() {
+fn render_action_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColors) {
+    if matches!(model.active_view, NavigationView::Dashboard) {
         return;
     }
-    ui.add_sized(
-        [92.0, 18.0],
-        egui::Label::new(
-            egui::RichText::new(label)
+
+    let grid = workbench_content_grid(ui.available_width());
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(grid.left);
+        ui.label(
+            egui::RichText::new("Actions")
                 .color(colors.ink_subtle)
                 .size(12.0),
-        )
-        .truncate(),
-    )
-    .on_hover_text(label);
+        );
+        match model.active_view {
+            NavigationView::Skills => {
+                render_skill_controls(ui, model, colors);
+            }
+            NavigationView::Projects => {
+                render_project_controls(ui, model, colors);
+            }
+            NavigationView::Agents => {
+                render_agent_editor_controls(ui, model, colors);
+            }
+            NavigationView::Plugins => {
+                render_plugin_controls(ui, model, colors);
+            }
+            NavigationView::Dashboard => {}
+        }
+    });
+    ui.add_space(8.0);
 }
 
-fn render_action_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColors) {
-    ui.separator();
-    ui.add_space(8.0);
-    ui.label(egui::RichText::new("Controls").strong());
-    ui.add_space(4.0);
+fn render_project_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColors) {
+    if let Some(draft) = model.open_project_draft().cloned() {
+        let mut path_text = draft.path_text;
+        render_path_field(
+            ui,
+            "Project path",
+            &mut path_text,
+            PathFieldKind::ExistingDirectory,
+            colors,
+        );
+        model.update_open_project_path(path_text);
+        if ui
+            .button(icons::button_label(icons::BROWSE, "Open"))
+            .clicked()
+        {
+            let _ = model.request_save_open_project();
+        }
+        if ui
+            .button(icons::button_label(icons::CANCEL, "Cancel"))
+            .clicked()
+        {
+            model.cancel_open_project();
+        }
+        return;
+    }
 
-    match model.active_view {
-        NavigationView::Skills => {
-            render_skill_controls(ui, model, colors);
+    if ui
+        .button(icons::button_label(icons::BROWSE, "Open project"))
+        .clicked()
+    {
+        model.begin_open_project();
+    }
+    if model.pending_remove_confirmation().is_some() {
+        ui.label(egui::RichText::new(DRIFT_REMOVE_CONFIRMATION_MESSAGE).color(colors.warning));
+        if ui
+            .button(
+                egui::RichText::new(icons::button_label(icons::REMOVE, "Confirm Remove"))
+                    .color(colors.danger),
+            )
+            .clicked()
+        {
+            let _ = model.confirm_pending_remove();
         }
-        NavigationView::Projects => {
-            if let Some(draft) = model.open_project_draft().cloned() {
-                let mut path_text = draft.path_text;
-                render_path_field(
-                    ui,
-                    "Project path",
-                    &mut path_text,
-                    PathFieldKind::ExistingDirectory,
-                    colors,
-                );
-                model.update_open_project_path(path_text);
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(icons::button_label(icons::BROWSE, "Open"))
-                        .clicked()
-                    {
-                        let _ = model.request_save_open_project();
-                    }
-                    if ui
-                        .button(icons::button_label(icons::CANCEL, "Cancel"))
-                        .clicked()
-                    {
-                        model.cancel_open_project();
-                    }
-                });
-                return;
-            }
-            if ui
-                .button(icons::button_label(icons::BROWSE, "Open project"))
-                .clicked()
-            {
-                model.begin_open_project();
-            }
-            ui.add_space(4.0);
-            if model.pending_remove_confirmation().is_some() {
-                ui.label(
-                    egui::RichText::new(DRIFT_REMOVE_CONFIRMATION_MESSAGE).color(colors.warning),
-                );
-                if ui
-                    .button(
-                        egui::RichText::new(icons::button_label(icons::REMOVE, "Confirm Remove"))
-                            .color(colors.danger),
-                    )
-                    .clicked()
-                {
-                    let _ = model.confirm_pending_remove();
-                }
-                ui.add_space(4.0);
-            }
-            for actions in project_actions(model).chunks(3) {
-                ui.horizontal(|ui| {
-                    for action in actions {
-                        render_project_action_button(ui, model, colors, *action);
-                    }
-                });
-            }
-        }
-        NavigationView::Agents => {
-            render_agent_editor_controls(ui, model, colors);
-        }
-        NavigationView::Plugins => {
-            render_plugin_controls(ui, model, colors);
-        }
-        NavigationView::Dashboard => {}
+    }
+    for action in project_actions(model) {
+        render_project_action_button(ui, model, colors, action);
     }
 }
 
@@ -1418,6 +1372,9 @@ fn render_plugin_action_button(
     }
 
     match action {
+        PluginAction::BackToPlugins => {
+            model.clear_plugin_selection();
+        }
         PluginAction::ScanPlugins => {
             let _ = model.request_scan_plugins();
         }

@@ -8,18 +8,16 @@ pub fn view_name() -> &'static str {
 }
 
 pub fn renderable(model: &GuiModel) -> RenderableView {
+    if let Some(plugin) = model.selected_plugin() {
+        return plugin_skill_renderable(model, plugin);
+    }
+
     let mut main_rows = Vec::new();
     for plugin in &model.plugins {
         main_rows.push(RenderRow {
             id: plugin.id.clone(),
             cells: plugin_cells(plugin),
         });
-        for capability in &plugin.capabilities {
-            main_rows.push(RenderRow {
-                id: capability.id.clone(),
-                cells: capability_cells(plugin, capability),
-            });
-        }
     }
 
     RenderableView {
@@ -30,7 +28,7 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
             "Provider".to_string(),
             "Agent".to_string(),
             "Status".to_string(),
-            "Capabilities".to_string(),
+            "Skills".to_string(),
             "Path".to_string(),
             "Updated".to_string(),
         ],
@@ -43,27 +41,50 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
     }
 }
 
+fn plugin_skill_renderable(model: &GuiModel, plugin: &PluginPackage) -> RenderableView {
+    let main_rows = plugin
+        .capabilities
+        .iter()
+        .filter(|capability| capability.kind == RuntimeCapabilityKind::PluginProvidedSkill)
+        .map(|capability| RenderRow {
+            id: capability.id.clone(),
+            cells: plugin_skill_cells(plugin, capability),
+        })
+        .collect::<Vec<_>>();
+
+    RenderableView {
+        view: model.active_view,
+        title: format!("Plugins / {}", plugin.display_name),
+        columns: vec![
+            "Skill".to_string(),
+            "Status".to_string(),
+            "Kind".to_string(),
+            "Path".to_string(),
+        ],
+        main_rows,
+        inspector_sections: inspector_sections(model),
+        empty_message: Some("No plugin-provided Skills found."),
+    }
+}
+
 fn plugin_cells(plugin: &PluginPackage) -> Vec<String> {
     vec![
         plugin.display_name.clone(),
         plugin.provider.clone(),
         plugin.agent_id.to_string(),
         status_label(&plugin.status).to_string(),
-        capabilities_summary(&plugin.capabilities),
+        plugin_skill_summary(plugin),
         plugin.package_path.to_string(),
         plugin.updated_at.clone().unwrap_or_else(|| "-".to_string()),
     ]
 }
 
-fn capability_cells(plugin: &PluginPackage, capability: &PluginRuntimeCapability) -> Vec<String> {
+fn plugin_skill_cells(plugin: &PluginPackage, capability: &PluginRuntimeCapability) -> Vec<String> {
     vec![
         capability.name.clone(),
-        plugin.provider.clone(),
-        plugin.agent_id.to_string(),
-        "Read-only".to_string(),
+        status_label(&plugin.status).to_string(),
         runtime_kind_label(&capability.kind).to_string(),
         capability.path.to_string(),
-        "-".to_string(),
     ]
 }
 
@@ -234,4 +255,17 @@ fn capabilities_summary(capabilities: &[PluginRuntimeCapability]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" · ")
+}
+
+fn plugin_skill_summary(plugin: &PluginPackage) -> String {
+    let count = plugin
+        .capabilities
+        .iter()
+        .filter(|capability| capability.kind == RuntimeCapabilityKind::PluginProvidedSkill)
+        .count();
+    match count {
+        0 => "No Skills".to_string(),
+        1 => "1 Skill".to_string(),
+        count => format!("{count} Skills"),
+    }
 }

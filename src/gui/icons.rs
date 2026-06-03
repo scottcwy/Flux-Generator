@@ -6,11 +6,13 @@ pub const FONT_NAME: &str = "font_awesome_7_free_solid";
 pub const DASHBOARD: &str = "\u{f624}";
 pub const SKILL: &str = "\u{f72b}";
 pub const AGENT: &str = "\u{f544}";
-pub const PROJECT: &str = "\u{f802}";
+pub const PROJECT: &str = BROWSE;
 pub const PLUGIN: &str = "\u{f1e6}";
 
 pub const SCAN: &str = "\u{f021}";
 pub const REFRESH: &str = "\u{f021}";
+pub const BACK: &str = "\u{f060}";
+pub const FORWARD: &str = "\u{f061}";
 pub const ENABLE_SKILL: &str = "\u{f144}";
 pub const DISABLE_SKILL: &str = "\u{f28b}";
 pub const ENABLE_PLUGIN: &str = "\u{f205}";

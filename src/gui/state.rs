@@ -48,6 +48,7 @@ pub const GLOBAL_UNINSTALL_CONFIRMATION_MESSAGE: &str =
     "Uninstall removes this managed copy from Managed Inventory. Agent Space copies are not deleted.";
 pub const SKILL_INSTANCE_DISABLE_CONFIRMATION_MESSAGE: &str =
     "Disable changes SKILL.md to SKILL.md.disabled in the Agent Space. It does not delete the Skill directory.";
+const WORKBENCH_HISTORY_LIMIT: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NavigationView {
@@ -82,6 +83,12 @@ impl NavigationView {
 pub enum GuiScope {
     GlobalInventory,
     Project(Utf8PathBuf),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WorkbenchLocation {
+    view: NavigationView,
+    scope: GuiScope,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -907,6 +914,8 @@ pub struct GuiModel {
     agent_editor_draft: Option<AgentEditorDraft>,
     install_local_skill_draft: Option<InstallLocalSkillDraft>,
     open_project_draft: Option<OpenProjectDraft>,
+    view_back_stack: Vec<WorkbenchLocation>,
+    view_forward_stack: Vec<WorkbenchLocation>,
 }
 
 impl GuiModel {
@@ -1036,14 +1045,25 @@ impl GuiModel {
             agent_editor_draft: None,
             install_local_skill_draft: None,
             open_project_draft: None,
+            view_back_stack: Vec::new(),
+            view_forward_stack: Vec::new(),
         })
     }
 
     pub fn navigate(&mut self, view: NavigationView) {
+        if self.active_view == view {
+            return;
+        }
+        self.remember_current_location();
         self.active_view = view;
+        self.view_forward_stack.clear();
     }
 
     pub fn select_scope(&mut self, scope: GuiScope) {
+        if self.active_scope == scope {
+            return;
+        }
+        self.remember_current_location();
         if let GuiScope::Project(path) = &scope {
             self.selected_project = Some(path.clone());
             self.selected_deployment = None;
@@ -1051,6 +1071,52 @@ impl GuiModel {
             self.pending_remove_confirmation = None;
         }
         self.active_scope = scope;
+        self.view_forward_stack.clear();
+    }
+
+    pub fn can_go_back(&self) -> bool {
+        !self.view_back_stack.is_empty()
+    }
+
+    pub fn can_go_forward(&self) -> bool {
+        !self.view_forward_stack.is_empty()
+    }
+
+    pub fn go_back(&mut self) -> Option<NavigationView> {
+        let location = self.view_back_stack.pop()?;
+        self.view_forward_stack.push(self.current_location());
+        self.restore_location(location);
+        Some(self.active_view)
+    }
+
+    pub fn go_forward(&mut self) -> Option<NavigationView> {
+        let location = self.view_forward_stack.pop()?;
+        self.view_back_stack.push(self.current_location());
+        self.restore_location(location);
+        Some(self.active_view)
+    }
+
+    fn remember_current_location(&mut self) {
+        let location = self.current_location();
+        if self.view_back_stack.last() == Some(&location) {
+            return;
+        }
+        self.view_back_stack.push(location);
+        if self.view_back_stack.len() > WORKBENCH_HISTORY_LIMIT {
+            self.view_back_stack.remove(0);
+        }
+    }
+
+    fn current_location(&self) -> WorkbenchLocation {
+        WorkbenchLocation {
+            view: self.active_view,
+            scope: self.active_scope.clone(),
+        }
+    }
+
+    fn restore_location(&mut self, location: WorkbenchLocation) {
+        self.active_view = location.view;
+        self.active_scope = location.scope;
     }
 
     pub fn select_skill(&mut self, skill_id: SkillId) {
@@ -1093,6 +1159,11 @@ impl GuiModel {
 
     pub fn select_plugin(&mut self, plugin_id: String) {
         self.selected_plugin = Some(plugin_id);
+        self.selected_plugin_capability = None;
+    }
+
+    pub fn clear_plugin_selection(&mut self) {
+        self.selected_plugin = None;
         self.selected_plugin_capability = None;
     }
 
@@ -1807,6 +1878,8 @@ impl GuiModel {
         let skill_status_filter = self.skill_status_filter.clone();
         let pending_intents = self.pending_intents.clone();
         let skill_risk_reports = self.skill_risk_reports.clone();
+        let view_back_stack = self.view_back_stack.clone();
+        let view_forward_stack = self.view_forward_stack.clone();
         let selected_agent_after_save = match &intent {
             GuiActionIntent::AddCustomAgent { agent_id, .. }
             | GuiActionIntent::UpdateAgentProjectSkillDirs { agent_id, .. }
@@ -1921,6 +1994,8 @@ impl GuiModel {
         self.skill_scope_filter = skill_scope_filter;
         self.skill_status_filter = skill_status_filter;
         self.pending_intents = pending_intents;
+        self.view_back_stack = view_back_stack;
+        self.view_forward_stack = view_forward_stack;
         self.skill_risk_reports = skill_risk_reports
             .into_iter()
             .filter(|(skill_id, report)| {
@@ -2523,6 +2598,8 @@ impl Default for GuiModel {
             agent_editor_draft: None,
             install_local_skill_draft: None,
             open_project_draft: None,
+            view_back_stack: Vec::new(),
+            view_forward_stack: Vec::new(),
         }
     }
 }
