@@ -25,10 +25,10 @@ use skill_kits::gui::{
     workbench_button_label, workbench_button_metrics, workbench_cell_alignment,
     workbench_cell_content_offset_x, workbench_cell_style, workbench_chrome_top_inset,
     workbench_content_grid, workbench_filter_width, workbench_renders_inspector_panel,
-    workbench_row_accepts_keyboard_key, workbench_row_fill, workbench_table_metrics, AgentAction,
-    InspectorLineKind, InspectorLinePresentation, PathFieldKind, PluginAction, ProjectAction,
-    SkillAction, SkillKitsGuiApp, WorkbenchCellAlignment, WorkbenchCellStyle,
-    SIDEBAR_NAV_ROW_HEIGHT, SIDEBAR_WIDTH,
+    workbench_row_accepts_keyboard_key, workbench_row_fill, workbench_status_badge_rect,
+    workbench_table_metrics, AgentAction, InspectorLineKind, InspectorLinePresentation,
+    PathFieldKind, PluginAction, ProjectAction, SkillAction, SkillKitsGuiApp,
+    WorkbenchCellAlignment, WorkbenchCellStyle, SIDEBAR_NAV_ROW_HEIGHT, SIDEBAR_WIDTH,
 };
 use tempfile::TempDir;
 
@@ -259,8 +259,14 @@ fn gui_font_stack_uses_bundled_geist_as_primary_ui_font() {
         .get(&egui::FontFamily::Monospace)
         .expect("monospace font family");
 
-    assert_eq!(proportional.first().map(String::as_str), Some(icons::UI_FONT_NAME));
-    assert_eq!(monospace.first().map(String::as_str), Some(icons::MONO_FONT_NAME));
+    assert_eq!(
+        proportional.first().map(String::as_str),
+        Some(icons::UI_FONT_NAME)
+    );
+    assert_eq!(
+        monospace.first().map(String::as_str),
+        Some(icons::MONO_FONT_NAME)
+    );
     assert!(fonts.font_data.contains_key(icons::UI_FONT_NAME));
     assert!(fonts.font_data.contains_key(icons::MONO_FONT_NAME));
 }
@@ -1187,6 +1193,7 @@ fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
     let dashboard_grid = dashboard_overview_grid(620.0);
     let button_metrics = workbench_button_metrics();
 
+    assert_eq!(colors.surface_1, colors.canvas);
     assert_eq!(SIDEBAR_WIDTH, 244.0);
     assert_eq!(SIDEBAR_NAV_ROW_HEIGHT, 36.0);
     assert_eq!(sidebar_grid.row_outer_inset, 8.0);
@@ -1208,7 +1215,7 @@ fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
     );
     assert_eq!(
         workbench_row_fill(false, true, colors),
-        egui::Color32::from_rgb(0x13, 0x14, 0x18)
+        egui::Color32::from_rgb(0x14, 0x14, 0x14)
     );
     assert_ne!(workbench_row_fill(false, true, colors), colors.surface_2);
     assert_eq!(workbench_row_fill(true, false, colors), colors.surface_3);
@@ -1340,8 +1347,8 @@ fn workbench_cell_styles_mark_statuses_and_paths_for_dense_rows() {
         );
     }
     assert_eq!(workbench_cell_content_offset_x("Status"), 8.0);
-    assert_eq!(workbench_cell_content_offset_x("Enabled"), 8.0);
-    assert_eq!(workbench_cell_content_offset_x("Validation"), 8.0);
+    assert_eq!(workbench_cell_content_offset_x("Enabled"), 0.0);
+    assert_eq!(workbench_cell_content_offset_x("Validation"), 0.0);
     assert_eq!(workbench_cell_content_offset_x("Source"), 0.0);
     assert_eq!(workbench_cell_content_offset_x("Skill"), 0.0);
 }
@@ -1367,6 +1374,71 @@ fn skills_table_metrics_align_status_and_source_columns() {
     assert_eq!(metrics.column_lefts, vec![12.0, 176.0, 340.0, 492.0, 612.0]);
     assert_eq!(metrics.content_width, 744.0);
     assert_eq!(metrics.table_width, 768.0);
+}
+
+#[test]
+fn skills_table_metrics_evenly_distribute_wide_workbench_columns() {
+    let columns = vec![
+        "Skill".to_string(),
+        "Agent".to_string(),
+        "Scope".to_string(),
+        "Status".to_string(),
+        "Source".to_string(),
+    ];
+
+    let metrics = workbench_table_metrics(&columns, 920.0);
+
+    assert_eq!(metrics.inset, 12.0);
+    assert_eq!(metrics.column_gap, 8.0);
+    assert_eq!(
+        metrics.column_widths,
+        vec![172.8, 172.8, 172.8, 172.8, 172.8]
+    );
+    assert_eq!(metrics.column_lefts, vec![12.0, 192.8, 373.6, 554.4, 735.2]);
+    assert_eq!(metrics.content_width, 896.0);
+    assert_eq!(metrics.table_width, 920.0);
+
+    let status_center = metrics.column_lefts[3] + (metrics.column_widths[3] / 2.0);
+    let source_center = metrics.column_lefts[4] + (metrics.column_widths[4] / 2.0);
+    assert!(((source_center - status_center) - 180.8).abs() < 0.001);
+}
+
+#[test]
+fn agent_table_metrics_evenly_distribute_wide_workbench_columns() {
+    let columns = vec![
+        "Agent".to_string(),
+        "Project skill directories".to_string(),
+        "Enabled".to_string(),
+        "Validation".to_string(),
+    ];
+
+    let metrics = workbench_table_metrics(&columns, 920.0);
+
+    assert_eq!(metrics.inset, 12.0);
+    assert_eq!(metrics.column_gap, 8.0);
+    assert_eq!(metrics.column_widths, vec![218.0, 218.0, 218.0, 218.0]);
+    assert_eq!(metrics.column_lefts, vec![12.0, 238.0, 464.0, 690.0]);
+    assert_eq!(metrics.content_width, 896.0);
+    assert_eq!(metrics.table_width, 920.0);
+
+    let enabled_center = metrics.column_lefts[2] + (metrics.column_widths[2] / 2.0);
+    let validation_center = metrics.column_lefts[3] + (metrics.column_widths[3] / 2.0);
+    assert_eq!(validation_center - enabled_center, 226.0);
+}
+
+#[test]
+fn status_badge_rect_centers_icon_text_groups_under_column_headers() {
+    let cell_rect = egui::Rect::from_min_size(egui::pos2(900.0, 40.0), egui::vec2(218.0, 34.0));
+    let badge_rect = workbench_status_badge_rect(cell_rect, "Enabled");
+
+    assert_eq!(badge_rect.center().x, cell_rect.center().x);
+    assert_eq!(badge_rect.center().y, cell_rect.center().y);
+    assert!(badge_rect.width() < cell_rect.width());
+    assert_eq!(badge_rect.height(), 22.0);
+
+    let ready_rect = workbench_status_badge_rect(cell_rect, "Ready");
+    assert_eq!(ready_rect.center().x, cell_rect.center().x);
+    assert!(ready_rect.width() < badge_rect.width());
 }
 
 #[test]

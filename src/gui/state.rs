@@ -2706,23 +2706,23 @@ pub struct UiColors {
 impl UiColors {
     pub fn dark() -> Self {
         Self {
-            canvas: Color32::from_rgb(0x08, 0x09, 0x0b),
-            surface_1: Color32::from_rgb(0x10, 0x11, 0x14),
-            surface_2: Color32::from_rgb(0x17, 0x19, 0x1d),
-            surface_3: Color32::from_rgb(0x20, 0x22, 0x27),
-            surface_4: Color32::from_rgb(0x2a, 0x2d, 0x33),
-            hairline: Color32::from_rgb(0x25, 0x27, 0x2d),
-            hairline_strong: Color32::from_rgb(0x36, 0x39, 0x42),
-            ink: Color32::from_rgb(0xf2, 0xf3, 0xf3),
-            ink_muted: Color32::from_rgb(0xb9, 0xbe, 0xc7),
-            ink_subtle: Color32::from_rgb(0x85, 0x8b, 0x96),
-            ink_tertiary: Color32::from_rgb(0x5f, 0x65, 0x70),
-            inverse_ink: Color32::from_rgb(0x11, 0x12, 0x16),
+            canvas: Color32::from_rgb(0x05, 0x05, 0x05),
+            surface_1: Color32::from_rgb(0x05, 0x05, 0x05),
+            surface_2: Color32::from_rgb(0x16, 0x16, 0x16),
+            surface_3: Color32::from_rgb(0x1f, 0x1f, 0x1f),
+            surface_4: Color32::from_rgb(0x2a, 0x2a, 0x2a),
+            hairline: Color32::from_rgb(0x24, 0x24, 0x24),
+            hairline_strong: Color32::from_rgb(0x3a, 0x3a, 0x3a),
+            ink: Color32::from_rgb(0xed, 0xed, 0xed),
+            ink_muted: Color32::from_rgb(0xa1, 0xa1, 0xa1),
+            ink_subtle: Color32::from_rgb(0x73, 0x73, 0x73),
+            ink_tertiary: Color32::from_rgb(0x52, 0x52, 0x52),
+            inverse_ink: Color32::from_rgb(0x0a, 0x0a, 0x0a),
             success: Color32::from_rgb(0x67, 0xa8, 0x78),
             warning: Color32::from_rgb(0xc5, 0xa3, 0x65),
             danger: Color32::from_rgb(0xd0, 0x6b, 0x6b),
-            info: Color32::from_rgb(0x9e, 0xa4, 0xad),
-            focus: Color32::from_rgb(0xe4, 0xe6, 0xeb),
+            info: Color32::from_rgb(0xa3, 0xa3, 0xa3),
+            focus: Color32::from_rgb(0xed, 0xed, 0xed),
         }
     }
 }

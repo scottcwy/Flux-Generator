@@ -58,9 +58,7 @@ pub fn install_font(ctx: &egui::Context) {
 pub fn install_font_definitions(fonts: &mut egui::FontDefinitions) {
     fonts.font_data.insert(
         UI_FONT_NAME.to_string(),
-        egui::FontData::from_static(include_bytes!(
-            "../../assets/fonts/geist/Geist-Regular.ttf"
-        )),
+        egui::FontData::from_static(include_bytes!("../../assets/fonts/geist/Geist-Regular.ttf")),
     );
     fonts.font_data.insert(
         MONO_FONT_NAME.to_string(),
@@ -69,9 +67,7 @@ pub fn install_font_definitions(fonts: &mut egui::FontDefinitions) {
         )),
     );
     if let Some(font_data) = load_cjk_fallback_font() {
-        fonts
-            .font_data
-            .insert(CJK_FONT_NAME.to_string(), font_data);
+        fonts.font_data.insert(CJK_FONT_NAME.to_string(), font_data);
     }
     fonts.font_data.insert(
         FONT_NAME.to_string(),

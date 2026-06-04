@@ -11,9 +11,8 @@ use crate::core::ToggleState;
 use camino::Utf8Path;
 use eframe::egui;
 use state::{
-    AgentEditorMode, GuiController, GuiModel, GuiScope, GuiStatusKind, NavigationView, RenderRow,
-    RenderableView, UiColors, DRIFT_REMOVE_CONFIRMATION_MESSAGE,
-    SKILL_INSTANCE_DISABLE_CONFIRMATION_MESSAGE,
+    AgentEditorMode, GuiController, GuiModel, GuiScope, NavigationView, RenderRow, RenderableView,
+    UiColors, DRIFT_REMOVE_CONFIRMATION_MESSAGE, SKILL_INSTANCE_DISABLE_CONFIRMATION_MESSAGE,
 };
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
@@ -22,6 +21,11 @@ use std::thread;
 const MAIN_ROW_HEIGHT: f32 = 34.0;
 const MAIN_CONTENT_INSET: f32 = 12.0;
 const TABLE_COLUMN_GAP: f32 = 8.0;
+const STATUS_BADGE_HEIGHT: f32 = 22.0;
+const STATUS_BADGE_HORIZONTAL_PADDING: f32 = 7.0;
+const STATUS_BADGE_ICON_WIDTH: f32 = 14.0;
+const STATUS_BADGE_ICON_TEXT_GAP: f32 = 6.0;
+const STATUS_BADGE_TEXT_CHAR_WIDTH: f32 = 7.0;
 const DASHBOARD_VALUE_WIDTH: f32 = 132.0;
 pub const SIDEBAR_WIDTH: f32 = 244.0;
 pub const SIDEBAR_NAV_ROW_HEIGHT: f32 = 36.0;
@@ -294,9 +298,18 @@ pub fn workbench_cell_alignment(_column: &str) -> WorkbenchCellAlignment {
 
 pub fn workbench_cell_content_offset_x(column: &str) -> f32 {
     match column {
-        "Status" | "Enabled" | "Validation" => 8.0,
+        "Status" => 8.0,
         _ => 0.0,
     }
+}
+
+pub fn workbench_status_badge_rect(cell_rect: egui::Rect, value: &str) -> egui::Rect {
+    let natural_width = (STATUS_BADGE_HORIZONTAL_PADDING * 2.0)
+        + STATUS_BADGE_ICON_WIDTH
+        + STATUS_BADGE_ICON_TEXT_GAP
+        + (value.chars().count() as f32 * STATUS_BADGE_TEXT_CHAR_WIDTH);
+    let width = natural_width.min(cell_rect.width());
+    egui::Rect::from_center_size(cell_rect.center(), egui::vec2(width, STATUS_BADGE_HEIGHT))
 }
 
 pub fn workbench_row_accepts_keyboard_key(key: egui::Key) -> bool {
@@ -389,10 +402,17 @@ pub fn plugin_row_disclosure(view: NavigationView, columns: &[String]) -> Option
 }
 
 pub fn workbench_table_metrics(columns: &[String], viewport_width: f32) -> WorkbenchTableMetrics {
-    let column_widths = table_column_widths(columns);
-    let content_width = column_widths.iter().sum::<f32>()
-        + TABLE_COLUMN_GAP * column_widths.len().saturating_sub(1) as f32;
-    let table_width = (content_width + (MAIN_CONTENT_INSET * 2.0)).max(viewport_width);
+    let mut column_widths = table_column_widths(columns);
+    let natural_content_width = table_content_width(&column_widths);
+    let natural_table_width = natural_content_width + (MAIN_CONTENT_INSET * 2.0);
+    let table_width = natural_table_width.max(viewport_width);
+    if stretches_columns_to_viewport(columns) && table_width > natural_table_width {
+        let total_gap = TABLE_COLUMN_GAP * columns.len().saturating_sub(1) as f32;
+        let equal_width =
+            (table_width - (MAIN_CONTENT_INSET * 2.0) - total_gap) / columns.len().max(1) as f32;
+        column_widths = vec![equal_width; columns.len()];
+    }
+    let content_width = table_content_width(&column_widths);
     let mut cursor = MAIN_CONTENT_INSET;
     let column_lefts = column_widths
         .iter()
@@ -413,11 +433,41 @@ pub fn workbench_table_metrics(columns: &[String], viewport_width: f32) -> Workb
     }
 }
 
+fn table_content_width(column_widths: &[f32]) -> f32 {
+    column_widths.iter().sum::<f32>()
+        + TABLE_COLUMN_GAP * column_widths.len().saturating_sub(1) as f32
+}
+
+fn is_agent_table_columns(columns: &[String]) -> bool {
+    columns
+        == [
+            "Agent".to_string(),
+            "Project skill directories".to_string(),
+            "Enabled".to_string(),
+            "Validation".to_string(),
+        ]
+}
+
+fn is_skill_table_columns(columns: &[String]) -> bool {
+    columns
+        == [
+            "Skill".to_string(),
+            "Agent".to_string(),
+            "Scope".to_string(),
+            "Status".to_string(),
+            "Source".to_string(),
+        ]
+}
+
+fn stretches_columns_to_viewport(columns: &[String]) -> bool {
+    is_agent_table_columns(columns) || is_skill_table_columns(columns)
+}
+
 pub fn workbench_row_fill(selected: bool, hovered: bool, colors: UiColors) -> egui::Color32 {
     if selected {
         colors.surface_3
     } else if hovered {
-        egui::Color32::from_rgb(0x13, 0x14, 0x18)
+        egui::Color32::from_rgb(0x14, 0x14, 0x14)
     } else {
         egui::Color32::TRANSPARENT
     }
@@ -635,48 +685,12 @@ impl eframe::App for SkillKitsGuiApp {
         if chrome_top_inset > 0.0 {
             egui::TopBottomPanel::top("macos_chrome_spacer")
                 .frame(egui::Frame::none().fill(self.colors.surface_1))
+                .show_separator_line(false)
                 .exact_height(chrome_top_inset)
-                .show(ctx, |_ui| {});
-        }
-
-        egui::TopBottomPanel::top("top_bar")
-            .frame(egui::Frame::none().fill(self.colors.surface_1))
-            .exact_height(42.0)
-            .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.label(egui::RichText::new("Skill-kits").strong());
-                    ui.add_enabled(self.model.can_go_back(), egui::Button::new(icons::BACK))
-                        .on_hover_text("Back")
-                        .clicked()
-                        .then(|| self.model.go_back());
-                    ui.add_enabled(
-                        self.model.can_go_forward(),
-                        egui::Button::new(icons::FORWARD),
-                    )
-                    .on_hover_text("Forward")
-                    .clicked()
-                    .then(|| self.model.go_forward());
-                    ui.separator();
-                    ui.label(scope_label(&self.model.active_scope));
-                    if ui
-                        .button(icons::button_label(icons::REFRESH, "Refresh"))
-                        .clicked()
-                    {
-                        let _ = self.model.request_refresh_selected_project();
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(self.action_status_label());
-                    });
+                .show(ctx, |ui| {
+                    render_sidebar_boundary_extension(ui);
                 });
-                if let Some(status) = self.model.last_status() {
-                    let color = match status.kind {
-                        GuiStatusKind::Success => self.colors.success,
-                        GuiStatusKind::Error => self.colors.danger,
-                    };
-                    ui.separator();
-                    ui.label(egui::RichText::new(&status.message).color(color));
-                }
-            });
+        }
 
         egui::SidePanel::left("sidebar")
             .frame(egui::Frame::none().fill(self.colors.surface_1))
@@ -691,7 +705,7 @@ impl eframe::App for SkillKitsGuiApp {
                     }
                 }
                 ui.add_space(12.0);
-                ui.separator();
+                ui.add_space(4.0);
                 render_sidebar_section_label(ui, "Scope", self.colors);
                 if render_sidebar_scope_item(
                     ui,
@@ -842,6 +856,16 @@ fn render_sidebar_scope_item(
     render_sidebar_grid_item(ui, icon, label, selected, SIDEBAR_SCOPE_ROW_HEIGHT, colors)
 }
 
+fn render_sidebar_boundary_extension(ui: &mut egui::Ui) {
+    let rect = ui.max_rect();
+    let x = ui
+        .painter()
+        .round_to_pixel_center(rect.left() + SIDEBAR_WIDTH)
+        - 1.0;
+    let stroke = ui.style().visuals.widgets.noninteractive.bg_stroke;
+    ui.painter().vline(x, rect.y_range(), stroke);
+}
+
 fn render_sidebar_section_label(ui: &mut egui::Ui, label: &str, colors: UiColors) {
     let grid = sidebar_grid_metrics();
     ui.add_space(8.0);
@@ -924,7 +948,7 @@ fn render_main(
     ui.add_space(10.0);
     render_main_heading(ui, &renderable.title, colors);
     ui.add_space(8.0);
-    render_inset_divider(ui, colors);
+    render_inset_gap(ui);
     ui.add_space(4.0);
     render_action_controls(ui, model, colors);
     if matches!(renderable.view, NavigationView::Skills) {
@@ -962,28 +986,13 @@ fn render_main_heading(ui: &mut egui::Ui, title: &str, colors: UiColors) {
     });
 }
 
-fn render_inset_divider(ui: &mut egui::Ui, colors: UiColors) {
-    render_inset_divider_with_width(ui, ui.available_width(), colors);
-}
-
-fn render_inset_divider_with_width(ui: &mut egui::Ui, width: f32, colors: UiColors) {
-    let grid = workbench_content_grid(width);
-    let left = ui.min_rect().left();
-    let y = ui.cursor().top();
-    ui.painter().line_segment(
-        [
-            egui::pos2(left + grid.left, y),
-            egui::pos2(left + grid.right, y),
-        ],
-        egui::Stroke::new(1.0, colors.hairline),
-    );
+fn render_inset_gap(ui: &mut egui::Ui) {
     ui.add_space(1.0);
 }
 
 fn render_dashboard_overview(ui: &mut egui::Ui, renderable: &RenderableView, colors: UiColors) {
     ui.add_space(4.0);
     let grid = dashboard_overview_grid(ui.available_width());
-    let left = ui.min_rect().left();
 
     ui.horizontal(|ui| {
         ui.add_space(grid.heading_x);
@@ -994,15 +1003,6 @@ fn render_dashboard_overview(ui: &mut egui::Ui, renderable: &RenderableView, col
                 .color(colors.ink),
         );
     });
-    ui.add_space(6.0);
-    let y = ui.cursor().top();
-    ui.painter().line_segment(
-        [
-            egui::pos2(left + grid.divider_start_x, y),
-            egui::pos2(left + grid.divider_end_x, y),
-        ],
-        egui::Stroke::new(1.0, colors.hairline),
-    );
     ui.add_space(8.0);
 
     for row in &renderable.main_rows {
@@ -1063,7 +1063,7 @@ fn render_workbench_table(
             let viewport_width = ui.available_width();
             let metrics = workbench_table_metrics(&renderable.columns, viewport_width);
             render_table_header(ui, &renderable.columns, &metrics, colors);
-            render_inset_divider_with_width(ui, metrics.table_width, colors);
+            render_inset_gap(ui);
             egui::ScrollArea::vertical()
                 .id_salt(format!("main_table_vertical_{:?}", renderable.view))
                 .auto_shrink([false, false])
@@ -1200,9 +1200,10 @@ fn render_table_cell(
 ) {
     match workbench_cell_style(column) {
         WorkbenchCellStyle::StatusBadge => {
+            let badge_rect = workbench_status_badge_rect(cell_rect, cell);
             let mut cell_ui = ui.new_child(
                 egui::UiBuilder::new()
-                    .max_rect(cell_rect)
+                    .max_rect(badge_rect)
                     .layout(cell_layout(column)),
             );
             render_status_badge(&mut cell_ui, cell, row_hovered, selected, colors)
@@ -1260,7 +1261,10 @@ fn render_status_badge(
         .fill(status_badge_fill(value, row_hovered, selected, colors))
         .stroke(status_badge_stroke(value, row_hovered, selected, colors))
         .rounding(egui::Rounding::same(3.0))
-        .inner_margin(egui::Margin::symmetric(7.0, 2.0))
+        .inner_margin(egui::Margin::symmetric(
+            STATUS_BADGE_HORIZONTAL_PADDING,
+            2.0,
+        ))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.label(egui::RichText::new(icons::status_icon(value)).color(text_color));
@@ -1877,15 +1881,5 @@ fn render_project_action_button(
         ProjectAction::Remove => {
             let _ = model.request_remove_selected_deployment(false);
         }
-    }
-}
-
-fn scope_label(scope: &GuiScope) -> String {
-    match scope {
-        GuiScope::GlobalInventory => "Managed Inventory".to_string(),
-        GuiScope::Project(path) => path
-            .file_name()
-            .map(ToString::to_string)
-            .unwrap_or_else(|| path.to_string()),
     }
 }

@@ -2,7 +2,7 @@
 
 ## Design Direction
 
-Skill-kits uses a Monochrome Local Workbench style: dark, precise, compact, and grid-driven. The design should borrow the discipline of Linear-like product interfaces without copying Linear branding.
+Skill-kits uses a Monochrome Local Workbench style: near-black, precise, compact, and grid-driven. The design should borrow the restraint of Codex and Vercel-like product interfaces without copying either brand.
 
 ## Scene
 
@@ -16,17 +16,17 @@ Core dark tokens:
 
 | Token | Hex | Use |
 | --- | --- | --- |
-| `canvas` | `#08090b` | App background |
-| `surface_1` | `#101114` | Sidebar and inspector base |
-| `surface_2` | `#17191d` | Hover rows and secondary controls |
-| `surface_3` | `#202227` | Selected rows and active controls |
-| `surface_4` | `#2a2d33` | Strong focus surfaces |
-| `hairline` | `#25272d` | Default dividers |
-| `hairline_strong` | `#363942` | Active outlines |
-| `ink` | `#f2f3f3` | Primary text |
-| `ink_muted` | `#b9bec7` | Secondary text |
-| `ink_subtle` | `#858b96` | Metadata and helper text |
-| `ink_tertiary` | `#5f6570` | Disabled text |
+| `canvas` | `#050505` | App background |
+| `surface_1` | `#050505` | Sidebar and base panels |
+| `surface_2` | `#161616` | Hover rows and secondary controls |
+| `surface_3` | `#1f1f1f` | Selected rows and active controls |
+| `surface_4` | `#2a2a2a` | Strong focus surfaces |
+| `hairline` | `#242424` | Default dividers |
+| `hairline_strong` | `#3a3a3a` | Active outlines |
+| `ink` | `#ededed` | Primary text |
+| `ink_muted` | `#a1a1a1` | Secondary text |
+| `ink_subtle` | `#737373` | Metadata and helper text |
+| `ink_tertiary` | `#525252` | Disabled text |
 
 Semantic tokens:
 
@@ -35,8 +35,8 @@ Semantic tokens:
 | `success` | `#67a878` | Enabled or healthy |
 | `warning` | `#c5a365` | Caution, drift, outdated |
 | `danger` | `#d06b6b` | Invalid or destructive |
-| `info` | `#9ea4ad` | Neutral informational states |
-| `focus` | `#e4e6eb` | Keyboard focus and selected outline |
+| `info` | `#a3a3a3` | Neutral informational states |
+| `focus` | `#ededed` | Keyboard focus and selected outline |
 
 ## Typography
 
@@ -58,7 +58,6 @@ Type scale:
 
 Use a fixed desktop shell:
 
-- Top bar: app title, active scope, quick actions, action status.
 - Sidebar: primary navigation and recent project scope switcher.
 - Main pane: workbench table or dashboard rows.
 - Inspector: selected object details and controls.
