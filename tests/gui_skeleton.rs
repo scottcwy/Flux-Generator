@@ -22,14 +22,15 @@ use skill_kits::gui::{
     agent_actions, dashboard_overview_grid, icons, inspector_line_presentation, native_options,
     path_validation_message, plugin_actions, plugin_row_disclosure, project_actions,
     sidebar_grid_metrics, sidebar_nav_label, skill_action_command_label, skill_actions,
-    status_badge_fill, status_badge_stroke, workbench_button_label, workbench_button_metrics,
-    workbench_cell_alignment, workbench_cell_content_offset_x, workbench_cell_style,
-    workbench_chrome_top_inset, workbench_command_row_metrics, workbench_content_grid,
-    workbench_filter_width, workbench_renders_inspector_panel, workbench_row_accepts_keyboard_key,
-    workbench_row_fill, workbench_static_labels_selectable, workbench_status_badge_rect,
-    workbench_table_metrics, AgentAction, InspectorLineKind, InspectorLinePresentation,
-    PathFieldKind, PluginAction, ProjectAction, SkillAction, SkillKitsGuiApp,
-    WorkbenchCellAlignment, WorkbenchCellStyle, SIDEBAR_NAV_ROW_HEIGHT, SIDEBAR_WIDTH,
+    status_badge_fill, status_badge_stroke, workbench_button_hover_fill, workbench_button_label,
+    workbench_button_metrics, workbench_cell_alignment, workbench_cell_content_offset_x,
+    workbench_cell_style, workbench_chrome_top_inset, workbench_command_row_metrics,
+    workbench_content_grid, workbench_filter_width, workbench_hover_tooltips_enabled,
+    workbench_renders_inspector_panel, workbench_row_accepts_keyboard_key, workbench_row_fill,
+    workbench_static_labels_selectable, workbench_status_badge_rect, workbench_table_metrics,
+    AgentAction, InspectorLineKind, InspectorLinePresentation, PathFieldKind, PluginAction,
+    ProjectAction, SkillAction, SkillKitsGuiApp, WorkbenchCellAlignment, WorkbenchCellStyle,
+    SIDEBAR_NAV_ROW_HEIGHT, SIDEBAR_WIDTH,
 };
 use tempfile::TempDir;
 
@@ -1248,7 +1249,20 @@ fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
     assert_eq!(button_metrics.radius, 4.0);
     assert_eq!(button_metrics.icon_width, 18.0);
     assert_eq!(button_metrics.horizontal_padding, 9.0);
+    assert_eq!(
+        workbench_button_hover_fill(true, true, colors),
+        colors.surface_2
+    );
+    assert_eq!(
+        workbench_button_hover_fill(false, true, colors),
+        egui::Color32::TRANSPARENT
+    );
+    assert_eq!(
+        workbench_button_hover_fill(true, false, colors),
+        egui::Color32::TRANSPARENT
+    );
     assert!(!workbench_static_labels_selectable());
+    assert!(!workbench_hover_tooltips_enabled());
     assert_eq!(command_row_metrics.height, 32.0);
     assert_eq!(command_row_metrics.radius, content_grid.row_rounding);
     assert_eq!(command_row_metrics.icon_x, 10.0);

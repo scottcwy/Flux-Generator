@@ -409,7 +409,23 @@ pub fn workbench_button_label(icon: &str, label: &str) -> String {
     icons::button_label(icon, label)
 }
 
+pub fn workbench_button_hover_fill(
+    enabled: bool,
+    hovered: bool,
+    colors: UiColors,
+) -> egui::Color32 {
+    if enabled {
+        workbench_row_fill(false, hovered, colors)
+    } else {
+        egui::Color32::TRANSPARENT
+    }
+}
+
 pub fn workbench_static_labels_selectable() -> bool {
+    false
+}
+
+pub fn workbench_hover_tooltips_enabled() -> bool {
     false
 }
 
@@ -767,8 +783,7 @@ impl eframe::App for SkillKitsGuiApp {
                                 &project.name,
                                 selected,
                                 self.colors,
-                            )
-                            .on_hover_text(project.path.to_string());
+                            );
                             if response.clicked() {
                                 self.model.select_scope(GuiScope::Project(project.path));
                             }
@@ -877,7 +892,6 @@ fn render_sidebar_nav_item(
         SIDEBAR_NAV_ROW_HEIGHT,
         colors,
     )
-    .on_hover_text(sidebar_nav_label(view))
 }
 
 fn render_sidebar_scope_item(
@@ -1081,7 +1095,6 @@ fn render_dashboard_overview_row(
         [grid.value_width, MAIN_ROW_HEIGHT],
         egui::Label::new(egui::RichText::new(value).color(colors.ink).strong()).truncate(),
     );
-    response.on_hover_text(format!("{label}: {value}"));
 }
 
 fn render_workbench_table(
@@ -1129,7 +1142,7 @@ fn render_table_header(
             egui::pos2(rect.left() + *left, rect.top()),
             egui::vec2(*width, header_height),
         );
-        let response = ui.put(
+        ui.put(
             cell_rect,
             egui::Label::new(
                 egui::RichText::new(column)
@@ -1139,7 +1152,6 @@ fn render_table_header(
             .halign(cell_halign(column))
             .truncate(),
         );
-        response.on_hover_text(column);
     }
 }
 
@@ -1220,7 +1232,6 @@ fn render_table_row(
         response.request_focus();
         model.select_render_row(&row.id);
     }
-    response.on_hover_text("Select row");
 }
 
 fn render_table_cell(
@@ -1240,11 +1251,10 @@ fn render_table_cell(
                     .max_rect(badge_rect)
                     .layout(cell_layout(column)),
             );
-            render_status_badge(&mut cell_ui, cell, row_hovered, selected, colors)
-                .on_hover_text(cell);
+            render_status_badge(&mut cell_ui, cell, row_hovered, selected, colors);
         }
         WorkbenchCellStyle::Mono => {
-            let response = ui.put(
+            ui.put(
                 cell_rect,
                 egui::Label::new(
                     egui::RichText::new(cell)
@@ -1255,16 +1265,14 @@ fn render_table_cell(
                 .halign(cell_halign(column))
                 .truncate(),
             );
-            response.on_hover_text(cell);
         }
         WorkbenchCellStyle::Text => {
-            let response = ui.put(
+            ui.put(
                 cell_rect,
                 egui::Label::new(egui::RichText::new(cell).color(colors.ink_muted))
                     .halign(cell_halign(column))
                     .truncate(),
             );
-            response.on_hover_text(cell);
         }
     }
 }
@@ -1357,6 +1365,26 @@ fn render_workbench_button(
             .rounding(egui::Rounding::same(metrics.radius)),
     );
 
+    let hover_fill = workbench_button_hover_fill(enabled, response.hovered(), colors);
+    if hover_fill != egui::Color32::TRANSPARENT {
+        ui.painter().rect_filled(
+            response.rect.shrink(1.0),
+            egui::Rounding::same(metrics.radius),
+            hover_fill,
+        );
+        ui.painter().text(
+            response.rect.center(),
+            egui::Align2::CENTER_CENTER,
+            workbench_button_label(icon, label),
+            egui::FontId::proportional(13.0),
+            text_color,
+        );
+        ui.painter().rect_stroke(
+            response.rect.shrink(1.0),
+            egui::Rounding::same(metrics.radius),
+            egui::Stroke::new(1.0, stroke_color),
+        );
+    }
     if enabled && response.hovered() && !danger {
         ui.painter().rect_stroke(
             response.rect.shrink(1.0),
@@ -1430,7 +1458,7 @@ fn render_command_row(
         text_color,
     );
 
-    response.on_hover_text(label)
+    response
 }
 
 fn render_confirmation_message(ui: &mut egui::Ui, message: &str, colors: UiColors) {
@@ -1909,18 +1937,13 @@ fn render_path_field(
                 .font(egui::TextStyle::Monospace)
                 .desired_width(190.0),
         );
-        if render_workbench_button(ui, icons::BROWSE, "Browse", colors, false, true)
-            .on_hover_text("Choose a folder")
-            .clicked()
-        {
+        if render_workbench_button(ui, icons::BROWSE, "Browse", colors, false, true).clicked() {
             if let Some(path) = browse_for_folder(value) {
                 *value = path;
             }
         }
         let can_reveal = path_exists(value);
-        if render_workbench_button(ui, icons::REVEAL, "Reveal", colors, false, can_reveal)
-            .on_hover_text("Reveal in Finder")
-            .clicked()
+        if render_workbench_button(ui, icons::REVEAL, "Reveal", colors, false, can_reveal).clicked()
         {
             reveal_path(value);
         }
@@ -1932,7 +1955,6 @@ fn render_path_field(
             false,
             !value.trim().is_empty(),
         )
-        .on_hover_text("Copy path")
         .clicked()
         {
             ui.output_mut(|output| output.copied_text = value.trim().to_string());
