@@ -25,15 +25,15 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
             cells: vec![
                 instance.name.clone(),
                 model.agent_label(&instance.agent_id),
+                skill_folder_label(instance),
                 skill_instance_status_label(instance).to_string(),
                 skill_instance_source_label(model, instance),
                 if instance.writable { "Yes" } else { "No" }.to_string(),
-                instance.skill_dir.to_string(),
             ],
         })
         .collect();
     let empty_message = if main_rows.is_empty() {
-        Some("No project Agent Space Skills in this scope. Scan Agent Spaces or open a project.")
+        Some("Open a project to scan project skills.")
     } else {
         None
     };
@@ -44,10 +44,10 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
         columns: vec![
             "Skill".to_string(),
             "Agent".to_string(),
+            "Skill folder".to_string(),
             "Status".to_string(),
             "Source".to_string(),
             "Writable".to_string(),
-            "Path".to_string(),
         ],
         main_rows,
         inspector_sections: inspector_sections(model),
@@ -63,6 +63,7 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
                 lines: vec![
                     instance.name.clone(),
                     format!("Agent {}", model.agent_label(&instance.agent_id)),
+                    format!("Skill folder {}", skill_folder_label(instance)),
                     format!("Status {}", skill_instance_status_label(instance)),
                     format!("Source {}", skill_instance_source_label(model, instance)),
                     format!("Writable {}", if instance.writable { "Yes" } else { "No" }),
@@ -104,9 +105,27 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
         title: "Empty".to_string(),
         lines: vec![
             "No Recent Project is selected.".to_string(),
-            "Open a project from the Scope switcher before scanning or deploying.".to_string(),
+            "Open a project before scanning project skills.".to_string(),
         ],
     }]
+}
+
+fn skill_folder_label(instance: &SkillInstance) -> String {
+    let crate::core::agent_space::SkillInstanceScope::Project { path, .. } = &instance.scope else {
+        return "-".to_string();
+    };
+    let Some(skill_name) = instance.skill_dir.file_name() else {
+        return "-".to_string();
+    };
+    let Some(skill_parent) = instance.skill_dir.parent() else {
+        return "-".to_string();
+    };
+    let folder = skill_parent.strip_prefix(path).unwrap_or(skill_parent);
+    if folder.as_str() == skill_name {
+        "-".to_string()
+    } else {
+        folder.to_string()
+    }
 }
 
 fn native_project_lines(model: &GuiModel) -> Vec<String> {

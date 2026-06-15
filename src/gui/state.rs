@@ -1056,6 +1056,7 @@ impl GuiModel {
         }
         self.remember_current_location();
         self.active_view = view;
+        self.pending_disable_skill_instance_confirmation = None;
         self.view_forward_stack.clear();
     }
 
@@ -1071,6 +1072,7 @@ impl GuiModel {
             self.pending_remove_confirmation = None;
         }
         self.active_scope = scope;
+        self.pending_disable_skill_instance_confirmation = None;
         self.view_forward_stack.clear();
     }
 
@@ -2249,16 +2251,10 @@ impl GuiModel {
                 format!("Selected {}.", project_label(project_path))
             }
             GuiActionIntent::UpdateAgentProjectSkillDirs { agent_id, .. } => {
-                format!(
-                    "Updated {} project Skill directories.",
-                    self.agent_label(agent_id)
-                )
+                format!("Updated {} Skill folder.", self.agent_label(agent_id))
             }
             GuiActionIntent::ResetAgentProjectSkillDirs { agent_id } => {
-                format!(
-                    "Reset {} project Skill directories.",
-                    self.agent_label(agent_id)
-                )
+                format!("Reset {} Skill folder.", self.agent_label(agent_id))
             }
             GuiActionIntent::RemoveCustomAgent { agent_id } => {
                 format!("Removed custom Agent {}.", self.agent_label(agent_id))
@@ -2448,7 +2444,19 @@ impl GuiModel {
     }
 
     pub fn select_skill_instance(&mut self, instance_id: String) {
+        if self
+            .pending_disable_skill_instance_confirmation
+            .as_ref()
+            .is_some_and(|pending| pending != &instance_id)
+        {
+            self.pending_disable_skill_instance_confirmation = None;
+        }
         self.selected_skill_instance = Some(instance_id);
+    }
+
+    pub fn clear_skill_instance_selection(&mut self) {
+        self.selected_skill_instance = None;
+        self.pending_disable_skill_instance_confirmation = None;
     }
 
     pub fn selected_skill_instance(&self) -> Option<&SkillInstance> {
@@ -2742,13 +2750,16 @@ pub fn skill_source_label(source: &SkillSource) -> String {
 
 pub fn skill_instance_scope_label(scope: &SkillInstanceScope) -> String {
     match scope {
-        SkillInstanceScope::Global => "Global".to_string(),
-        SkillInstanceScope::Project { name, .. } => format!("Project / {name}"),
+        SkillInstanceScope::Global => "-".to_string(),
+        SkillInstanceScope::Project { name, .. } => name.clone(),
     }
 }
 
 pub fn skill_instance_scope_filter_label(scope: &SkillInstanceScope) -> String {
-    skill_instance_scope_label(scope)
+    match scope {
+        SkillInstanceScope::Global => "No project".to_string(),
+        SkillInstanceScope::Project { name, .. } => name.clone(),
+    }
 }
 
 pub fn skill_instance_status_label(instance: &SkillInstance) -> &'static str {

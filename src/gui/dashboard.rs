@@ -28,6 +28,7 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
             ],
         },
         row("projects", "Recent Projects", summary.recent_project_count),
+        row("plugins", "Plugins", model.plugins.len()),
     ];
     let project_lines = if model.project_summaries.is_empty() {
         vec!["No Recent Projects".to_string()]
@@ -51,16 +52,10 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
         main_rows,
         inspector_sections: vec![
             InspectorSection {
-                title: "Scope".to_string(),
+                title: "Project".to_string(),
                 lines: vec![
-                    format!(
-                        "Agent Space instances {}",
-                        summary.agent_space_instance_count
-                    ),
-                    format!(
-                        "Project Agent Space instances {}",
-                        summary.project_agent_space_instance_count
-                    ),
+                    selected_project_line(model),
+                    format!("Recent Projects {}", summary.recent_project_count),
                 ],
             },
             InspectorSection {
@@ -86,6 +81,13 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
         ],
         empty_message: None,
     }
+}
+
+fn selected_project_line(model: &GuiModel) -> String {
+    model
+        .scope_project_path()
+        .map(|path| format!("Project {path}"))
+        .unwrap_or_else(|| "No project selected".to_string())
 }
 
 fn health_label(health: &crate::core::status::HealthState) -> &'static str {

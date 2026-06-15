@@ -3,8 +3,9 @@ use crate::core::{
     registry::ToggleState,
 };
 use crate::gui::state::{
-    is_native_skill_instance, skill_instance_scope_label, skill_instance_source_label,
-    skill_instance_status_label, GuiModel, InspectorSection, RenderRow, RenderableView,
+    is_native_skill_instance, skill_instance_scope_filter_label, skill_instance_scope_label,
+    skill_instance_source_label, skill_instance_status_label, GuiModel, InspectorSection,
+    RenderRow, RenderableView,
 };
 
 pub fn view_name() -> &'static str {
@@ -37,7 +38,7 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
         columns: vec![
             "Skill".to_string(),
             "Agent".to_string(),
-            "Scope".to_string(),
+            "Project".to_string(),
             "Status".to_string(),
             "Source".to_string(),
         ],
@@ -78,7 +79,7 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
                 instance.name.clone(),
                 format!("Instance ID {}", instance.id),
                 format!("Agent {}", agent_label(model, instance)),
-                format!("Scope {}", skill_instance_scope_label(&instance.scope)),
+                format!("Project {}", skill_instance_scope_label(&instance.scope)),
                 format!("Status {}", skill_instance_status_label(instance)),
                 format!("Source {}", skill_instance_source_label(model, instance)),
                 format!("Writable {}", if instance.writable { "Yes" } else { "No" }),
@@ -172,7 +173,7 @@ fn matches_agent_filter(model: &GuiModel, instance: &SkillInstance) -> bool {
 
 fn matches_scope_filter(model: &GuiModel, instance: &SkillInstance) -> bool {
     model.skill_scope_filter().map_or(true, |scope| {
-        skill_instance_scope_label(&instance.scope) == scope
+        skill_instance_scope_filter_label(&instance.scope) == scope
     })
 }
 

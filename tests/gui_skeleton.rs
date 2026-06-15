@@ -353,14 +353,14 @@ fn skills_view_renders_agent_space_instances_instead_of_managed_inventory_column
 
     assert_eq!(
         renderable.columns,
-        vec!["Skill", "Agent", "Scope", "Status", "Source"]
+        vec!["Skill", "Agent", "Project", "Status", "Source"]
     );
     assert_eq!(renderable.main_rows.len(), 1);
     let row = &renderable.main_rows[0];
     assert_eq!(row.cells.len(), 5);
     assert_eq!(row.cells[0], "Agent Visible");
     assert_eq!(row.cells[1], "Codex");
-    assert_eq!(row.cells[2], "Global");
+    assert_eq!(row.cells[2], "-");
     assert_eq!(row.cells[3], "Enabled");
     assert_eq!(row.cells[4], "Codex global");
     assert!(model.select_render_row(&row.id));
@@ -397,7 +397,7 @@ fn skill_instance_actions_toggle_selected_agent_space_file_only() {
     assert!(model.select_render_row(&row_id));
     assert_eq!(
         skill_actions(&model),
-        vec![SkillAction::ScanAgentSpaces, SkillAction::Disable]
+        vec![SkillAction::CancelSelection, SkillAction::Disable]
     );
     assert_eq!(
         model.request_disable_selected_skill_instance(),
@@ -417,7 +417,7 @@ fn skill_instance_actions_toggle_selected_agent_space_file_only() {
     );
     assert_eq!(
         skill_actions(&model),
-        vec![SkillAction::ScanAgentSpaces, SkillAction::Enable]
+        vec![SkillAction::CancelSelection, SkillAction::Enable]
     );
     assert_eq!(
         model.request_enable_selected_skill_instance(),
@@ -583,7 +583,7 @@ fn skills_view_filters_by_agent_and_scope_without_changing_selection_identity() 
         "filtering must not rewrite selected instance identity"
     );
 
-    model.set_skill_scope_filter(Some("Global".to_string()));
+    model.set_skill_scope_filter(Some("No project".to_string()));
     let renderable = model.renderable_view();
     assert_eq!(
         renderable
@@ -594,7 +594,7 @@ fn skills_view_filters_by_agent_and_scope_without_changing_selection_identity() 
         vec!["Codex Global"]
     );
     assert_eq!(model.skill_agent_filter(), Some(&AgentId::new("codex")));
-    assert_eq!(model.skill_scope_filter(), Some("Global"));
+    assert_eq!(model.skill_scope_filter(), Some("No project"));
 }
 
 #[test]
@@ -663,7 +663,7 @@ fn selected_agent_space_instance_can_be_imported_as_managed_copy() {
     assert!(model.select_render_row(&row_id));
     assert_eq!(
         skill_actions(&model),
-        vec![SkillAction::ScanAgentSpaces, SkillAction::Disable]
+        vec![SkillAction::CancelSelection, SkillAction::Disable]
     );
     assert_eq!(
         model.request_import_selected_skill_instance_as_managed_copy(),
@@ -716,7 +716,7 @@ fn selected_project_skill_instance_import_records_project_source_and_deployment_
     assert!(model.select_render_row(&row_id));
     assert_eq!(
         skill_actions(&model),
-        vec![SkillAction::ScanAgentSpaces, SkillAction::Disable]
+        vec![SkillAction::CancelSelection, SkillAction::Disable]
     );
     assert_eq!(
         model.request_import_selected_skill_instance_as_managed_copy(),
@@ -893,6 +893,76 @@ fn disabling_skill_instance_requires_inline_confirmation_copy() {
         })
     );
     assert_eq!(model.pending_intents().len(), 1);
+}
+
+#[test]
+fn cancel_skill_selection_exits_disable_context() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    write_global_codex_skill(&temp_dir, "cancel-disable", "# Cancel\n");
+
+    let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    let mut model = GuiModel::load_with_home_dir(&paths, home).unwrap();
+    model.navigate(NavigationView::Skills);
+    let row_id = model.renderable_view().main_rows[0].id.clone();
+    assert!(model.select_render_row(&row_id));
+    assert!(model.selected_skill_instance().is_some());
+    assert_eq!(
+        skill_actions(&model),
+        vec![SkillAction::CancelSelection, SkillAction::Disable]
+    );
+
+    assert_eq!(
+        model.request_disable_selected_skill_instance_with_confirmation(false),
+        None
+    );
+    assert_eq!(
+        model.pending_disable_skill_instance_confirmation(),
+        Some(row_id.as_str())
+    );
+
+    model.clear_skill_instance_selection();
+
+    assert!(model.selected_skill_instance().is_none());
+    assert_eq!(model.pending_disable_skill_instance_confirmation(), None);
+    assert_eq!(skill_actions(&model), vec![SkillAction::ScanAgentSpaces]);
+}
+
+#[test]
+fn changing_skill_selection_clears_pending_disable_confirmation() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = test_paths(&temp_dir);
+    ensure_app_dirs(&paths).unwrap();
+    write_config(&paths, &Config::default()).unwrap();
+    write_skills_registry(&paths, &SkillsRegistry::default()).unwrap();
+    write_deployments_registry(&paths, &DeploymentsRegistry::default()).unwrap();
+    write_global_codex_skill(&temp_dir, "first-skill", "# First\n");
+    write_global_codex_skill(&temp_dir, "second-skill", "# Second\n");
+
+    let home = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+    let mut model = GuiModel::load_with_home_dir(&paths, home).unwrap();
+    model.navigate(NavigationView::Skills);
+    let rows = model.renderable_view().main_rows;
+    let first_id = rows[0].id.clone();
+    let second_id = rows[1].id.clone();
+    assert!(model.select_render_row(&first_id));
+    assert_eq!(
+        model.request_disable_selected_skill_instance_with_confirmation(false),
+        None
+    );
+    assert_eq!(
+        model.pending_disable_skill_instance_confirmation(),
+        Some(first_id.as_str())
+    );
+
+    assert!(model.select_render_row(&second_id));
+
+    assert_eq!(model.pending_disable_skill_instance_confirmation(), None);
+    assert_eq!(model.selected_skill_instance().unwrap().id, second_id);
 }
 
 #[test]
@@ -1269,7 +1339,7 @@ fn workbench_grid_polish_helpers_keep_navigation_and_hover_states_stable() {
     assert_eq!(command_row_metrics.label_x, 36.0);
     assert_eq!(command_row_metrics.inset, content_grid.inset);
     assert_eq!(workbench_filter_width("Agent"), 136.0);
-    assert_eq!(workbench_filter_width("Scope"), 116.0);
+    assert_eq!(workbench_filter_width("Project"), 136.0);
     assert_eq!(workbench_filter_width("Status"), 112.0);
     assert_eq!(workbench_filter_width("Other"), 120.0);
     assert_eq!(
@@ -1369,12 +1439,12 @@ fn workbench_cell_styles_mark_statuses_and_paths_for_dense_rows() {
     );
     assert_eq!(workbench_cell_style("Path"), WorkbenchCellStyle::Mono);
     assert_eq!(
-        workbench_cell_style("Project skill directories"),
+        workbench_cell_style("Skill folder"),
         WorkbenchCellStyle::Mono
     );
     assert_eq!(workbench_cell_style("Source"), WorkbenchCellStyle::Text);
     assert_eq!(workbench_cell_style("Skill"), WorkbenchCellStyle::Text);
-    for column in ["Skill", "Agent", "Scope", "Status", "Source"] {
+    for column in ["Skill", "Agent", "Project", "Status", "Source"] {
         assert_eq!(
             workbench_cell_alignment(column),
             WorkbenchCellAlignment::Center
@@ -1392,7 +1462,7 @@ fn skills_table_metrics_align_status_and_source_columns() {
     let columns = vec![
         "Skill".to_string(),
         "Agent".to_string(),
-        "Scope".to_string(),
+        "Project".to_string(),
         "Status".to_string(),
         "Source".to_string(),
     ];
@@ -1415,7 +1485,7 @@ fn skills_table_metrics_evenly_distribute_wide_workbench_columns() {
     let columns = vec![
         "Skill".to_string(),
         "Agent".to_string(),
-        "Scope".to_string(),
+        "Project".to_string(),
         "Status".to_string(),
         "Source".to_string(),
     ];
@@ -1441,7 +1511,7 @@ fn skills_table_metrics_evenly_distribute_wide_workbench_columns() {
 fn agent_table_metrics_evenly_distribute_wide_workbench_columns() {
     let columns = vec![
         "Agent".to_string(),
-        "Project skill directories".to_string(),
+        "Skill folder".to_string(),
         "Enabled".to_string(),
         "Validation".to_string(),
     ];
@@ -1461,7 +1531,7 @@ fn agent_table_metrics_evenly_distribute_wide_workbench_columns() {
 }
 
 #[test]
-fn status_badge_rect_centers_icon_text_groups_under_column_headers() {
+fn status_badge_rect_uses_stable_width_for_status_alignment() {
     let cell_rect = egui::Rect::from_min_size(egui::pos2(900.0, 40.0), egui::vec2(218.0, 34.0));
     let badge_rect = workbench_status_badge_rect(cell_rect, "Enabled");
 
@@ -1472,7 +1542,11 @@ fn status_badge_rect_centers_icon_text_groups_under_column_headers() {
 
     let ready_rect = workbench_status_badge_rect(cell_rect, "Ready");
     assert_eq!(ready_rect.center().x, cell_rect.center().x);
-    assert!(ready_rect.width() < badge_rect.width());
+    assert_eq!(ready_rect.width(), badge_rect.width());
+
+    let disabled_rect = workbench_status_badge_rect(cell_rect, "Disabled");
+    assert_eq!(disabled_rect.left(), badge_rect.left());
+    assert_eq!(disabled_rect.width(), badge_rect.width());
 }
 
 #[test]
@@ -1671,16 +1745,16 @@ fn dashboard_renders_native_agent_space_health_status() {
     assert_eq!(model.dashboard.agent_space_instance_count, 0);
 
     let renderable = model.renderable_view();
-    let scope = renderable
+    let project = renderable
         .inspector_sections
         .iter()
-        .find(|section| section.title == "Scope")
-        .expect("missing Scope inspector section");
+        .find(|section| section.title == "Project")
+        .expect("missing Project inspector section");
     assert_eq!(
-        scope.lines,
+        project.lines,
         vec![
-            "Agent Space instances 0".to_string(),
-            "Project Agent Space instances 0".to_string(),
+            "No project selected".to_string(),
+            "Recent Projects 0".to_string(),
         ]
     );
     let health = renderable
@@ -1809,7 +1883,14 @@ fn projects_view_renders_native_project_skill_instances_and_actions() {
     let renderable = model.renderable_view();
     assert_eq!(
         renderable.columns,
-        vec!["Skill", "Agent", "Status", "Source", "Writable", "Path"]
+        vec![
+            "Skill",
+            "Agent",
+            "Skill folder",
+            "Status",
+            "Source",
+            "Writable"
+        ]
     );
     let row = renderable
         .main_rows
@@ -1817,10 +1898,10 @@ fn projects_view_renders_native_project_skill_instances_and_actions() {
         .find(|row| row.cells[0] == "Project Helper")
         .expect("native project row");
     assert_eq!(row.cells[1], "Codex");
-    assert_eq!(row.cells[2], "Enabled");
-    assert_eq!(row.cells[3], "Project");
-    assert_eq!(row.cells[4], "Yes");
-    assert_eq!(row.cells[5], skill_dir.to_string());
+    assert_eq!(row.cells[2], ".agents/skills");
+    assert_eq!(row.cells[3], "Enabled");
+    assert_eq!(row.cells[4], "Project");
+    assert_eq!(row.cells[5], "Yes");
     assert_eq!(project_actions(&model), vec![ProjectAction::Refresh]);
 
     let row_id = row.id.clone();
@@ -1830,6 +1911,7 @@ fn projects_view_renders_native_project_skill_instances_and_actions() {
         vec![
             "Project Helper".to_string(),
             "Agent Codex".to_string(),
+            "Skill folder .agents/skills".to_string(),
             "Status Enabled".to_string(),
             "Source Project".to_string(),
             "Writable Yes".to_string(),
@@ -1883,13 +1965,13 @@ fn gui_empty_states_are_contextual_and_actionable() {
     assert!(renderable.main_rows.is_empty());
     assert_eq!(
         renderable.empty_message,
-        Some("No project Agent Space Skills in this scope. Scan Agent Spaces or open a project.")
+        Some("Open a project to scan project skills.")
     );
     assert_eq!(
         section_lines(&model, "Empty"),
         vec![
             "No Recent Project is selected.".to_string(),
-            "Open a project from the Scope switcher before scanning or deploying.".to_string(),
+            "Open a project before scanning project skills.".to_string(),
         ]
     );
 }
@@ -2920,7 +3002,7 @@ fn edit_agent_editor_save_updates_project_dirs() {
     );
     assert_eq!(
         model.last_status().unwrap().message,
-        "Updated Codex project Skill directories."
+        "Updated Codex Skill folder."
     );
 }
 
@@ -3043,7 +3125,7 @@ fn reset_agent_action_restores_default_project_dirs_and_reloads_model() {
     );
     assert_eq!(
         model.last_status().unwrap().message,
-        "Reset Codex project Skill directories."
+        "Reset Codex Skill folder."
     );
 }
 

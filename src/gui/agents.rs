@@ -47,7 +47,7 @@ pub fn renderable(model: &GuiModel) -> RenderableView {
         title: view_name().to_string(),
         columns: vec![
             "Agent".to_string(),
-            "Project skill directories".to_string(),
+            "Skill folder".to_string(),
             "Enabled".to_string(),
             "Validation".to_string(),
         ],
@@ -67,15 +67,14 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
                 lines: vec![
                     draft.label_text.clone(),
                     format!("Agent id {}", draft.id_text),
-                    format!("Project dir {}", draft.project_dir_text),
+                    format!("Skill folder {}", draft.project_dir_text),
                 ],
             },
             InspectorSection {
                 title: "Actions".to_string(),
                 lines: vec![
-                    "Save writes the Agent project directory to local Skill-kits config."
-                        .to_string(),
-                    "Project directories must be relative paths.".to_string(),
+                    "Save writes the Agent Skill folder to local Skill-kits config.".to_string(),
+                    "Skill folders must be project-relative paths.".to_string(),
                 ],
             },
         ];
@@ -93,7 +92,7 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
                 ],
             },
             InspectorSection {
-                title: "Project Directories".to_string(),
+                title: "Skill Folder".to_string(),
                 lines: agent
                     .project_skill_dirs
                     .iter()
@@ -103,7 +102,7 @@ fn inspector_sections(model: &GuiModel) -> Vec<InspectorSection> {
             InspectorSection {
                 title: "Actions".to_string(),
                 lines: vec![
-                    "Edit path updates this Agent project Skill directory.".to_string(),
+                    "Edit path updates this Agent Skill folder.".to_string(),
                     "Reset default restores built-in Agent project directories.".to_string(),
                     "Remove custom deletes only the custom Agent config entry.".to_string(),
                     "Add custom creates a local config entry for another Agent.".to_string(),

@@ -179,12 +179,13 @@ fn release_smoke_fixture_loads_expected_gui_model_acceptance_state() {
         .main_rows
         .iter()
         .any(|row| row.cells[0] == "Release Smoke Source"
-            && row.cells[2] == "Disabled"
-            && row.cells[3] == "Project"));
+            && row.cells[2] == ".agents/skills"
+            && row.cells[3] == "Disabled"
+            && row.cells[4] == "Project"));
     assert!(projects
         .main_rows
         .iter()
-        .any(|row| row.cells[0] == "Release Smoke Project Seed" && row.cells[2] == "Enabled"));
+        .any(|row| row.cells[0] == "Release Smoke Project Seed" && row.cells[3] == "Enabled"));
 }
 
 fn copy_dir(source: &camino::Utf8Path, target: &camino::Utf8Path) {

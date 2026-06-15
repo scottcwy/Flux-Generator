@@ -136,6 +136,7 @@ pub fn navigation_icon(view: NavigationView) -> &'static str {
 pub fn skill_action_icon(action: SkillAction) -> &'static str {
     match action {
         SkillAction::ScanAgentSpaces => SCAN,
+        SkillAction::CancelSelection => CANCEL,
         SkillAction::Enable => ENABLE_SKILL,
         SkillAction::Disable => DISABLE_SKILL,
     }

@@ -26,6 +26,7 @@ const STATUS_BADGE_HORIZONTAL_PADDING: f32 = 7.0;
 const STATUS_BADGE_ICON_WIDTH: f32 = 14.0;
 const STATUS_BADGE_ICON_TEXT_GAP: f32 = 6.0;
 const STATUS_BADGE_TEXT_CHAR_WIDTH: f32 = 7.0;
+const STATUS_BADGE_FIXED_TEXT_CHARS: f32 = 12.0;
 const DASHBOARD_VALUE_WIDTH: f32 = 132.0;
 pub const SIDEBAR_WIDTH: f32 = 244.0;
 pub const SIDEBAR_NAV_ROW_HEIGHT: f32 = 36.0;
@@ -94,6 +95,7 @@ pub struct WorkbenchTableMetrics {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillAction {
     ScanAgentSpaces,
+    CancelSelection,
     Enable,
     Disable,
 }
@@ -140,6 +142,13 @@ pub enum WorkbenchCellStyle {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkbenchCellAlignment {
     Center,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommandTone {
+    Neutral,
+    Success,
+    Danger,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -201,6 +210,7 @@ impl SkillAction {
     fn label(self) -> &'static str {
         match self {
             Self::ScanAgentSpaces => "Scan Agent Spaces",
+            Self::CancelSelection => "Cancel",
             Self::Enable => "Enable",
             Self::Disable => "Disable",
         }
@@ -227,10 +237,10 @@ pub fn skill_action_command_label(action: SkillAction, confirming_disable: bool)
 }
 
 pub fn skill_actions(model: &GuiModel) -> Vec<SkillAction> {
-    let mut actions = vec![SkillAction::ScanAgentSpaces];
     if model.selected_skill_instance().is_none() {
-        return actions;
+        return vec![SkillAction::ScanAgentSpaces];
     }
+    let mut actions = vec![SkillAction::CancelSelection];
 
     if let Some(instance) = model.selected_skill_instance() {
         if instance.writable {
@@ -296,15 +306,8 @@ pub fn workbench_cell_style(column: &str) -> WorkbenchCellStyle {
     match column {
         "Status" | "Toggle" | "Validation" | "Enabled" | "Writable" | "Managed" | "Outdated"
         | "Drift" | "Risk" | "Read-only" => WorkbenchCellStyle::StatusBadge,
-        "Path"
-        | "Project skill directories"
-        | "Skill ID"
-        | "Instance ID"
-        | "Plugin ID"
-        | "Plugin Key"
-        | "Capability ID"
-        | "Hash"
-        | "Command" => WorkbenchCellStyle::Mono,
+        "Path" | "Skill folder" | "Skill ID" | "Instance ID" | "Plugin ID" | "Plugin Key"
+        | "Capability ID" | "Hash" | "Command" => WorkbenchCellStyle::Mono,
         _ => WorkbenchCellStyle::Text,
     }
 }
@@ -321,11 +324,12 @@ pub fn workbench_cell_content_offset_x(column: &str) -> f32 {
 }
 
 pub fn workbench_status_badge_rect(cell_rect: egui::Rect, value: &str) -> egui::Rect {
-    let natural_width = (STATUS_BADGE_HORIZONTAL_PADDING * 2.0)
+    let _ = value;
+    let fixed_width = (STATUS_BADGE_HORIZONTAL_PADDING * 2.0)
         + STATUS_BADGE_ICON_WIDTH
         + STATUS_BADGE_ICON_TEXT_GAP
-        + (value.chars().count() as f32 * STATUS_BADGE_TEXT_CHAR_WIDTH);
-    let width = natural_width.min(cell_rect.width());
+        + (STATUS_BADGE_FIXED_TEXT_CHARS * STATUS_BADGE_TEXT_CHAR_WIDTH);
+    let width = fixed_width.min(cell_rect.width());
     egui::Rect::from_center_size(cell_rect.center(), egui::vec2(width, STATUS_BADGE_HEIGHT))
 }
 
@@ -432,7 +436,7 @@ pub fn workbench_hover_tooltips_enabled() -> bool {
 pub fn workbench_filter_width(label: &str) -> f32 {
     match label {
         "Agent" => 136.0,
-        "Scope" => 116.0,
+        "Project" => 136.0,
         "Status" => 112.0,
         _ => 120.0,
     }
@@ -489,7 +493,7 @@ fn is_agent_table_columns(columns: &[String]) -> bool {
     columns
         == [
             "Agent".to_string(),
-            "Project skill directories".to_string(),
+            "Skill folder".to_string(),
             "Enabled".to_string(),
             "Validation".to_string(),
         ]
@@ -500,7 +504,7 @@ fn is_skill_table_columns(columns: &[String]) -> bool {
         == [
             "Skill".to_string(),
             "Agent".to_string(),
-            "Scope".to_string(),
+            "Project".to_string(),
             "Status".to_string(),
             "Source".to_string(),
         ]
@@ -572,8 +576,8 @@ pub fn path_validation_message(value: &str, kind: PathFieldKind) -> Option<&'sta
 pub fn inspector_line_presentation(line: &str) -> InspectorLinePresentation {
     const LABELS: &[&str] = &[
         "Missing managed source",
-        "Project dir",
-        "Project path",
+        "Project",
+        "Skill folder",
         "Project Agent Space instances",
         "Agent Space instances",
         "Instance ID",
@@ -589,7 +593,6 @@ pub fn inspector_line_presentation(line: &str) -> InspectorLinePresentation {
         "Writable",
         "Managed",
         "Agent",
-        "Scope",
         "Kind",
         "Title",
         "Description",
@@ -622,7 +625,7 @@ pub fn inspector_line_presentation(line: &str) -> InspectorLinePresentation {
 
 fn inspector_line_kind(label: &str, value: &str) -> InspectorLineKind {
     match label {
-        "Skill dir" | "Enabled" | "Disabled" | "Project dir" | "Project path" | "Config path"
+        "Skill dir" | "Enabled" | "Disabled" | "Project" | "Skill folder" | "Config path"
         | "Package path" | "Manifest path" => InspectorLineKind::Path,
         "Instance ID" | "Agent id" | "Content hash" | "Scanned hash" | "Plugin id"
         | "Plugin key" | "Capability id" => InspectorLineKind::Mono,
@@ -753,7 +756,7 @@ impl eframe::App for SkillKitsGuiApp {
                 }
                 ui.add_space(12.0);
                 ui.add_space(4.0);
-                render_sidebar_section_label(ui, "Scope", self.colors);
+                render_sidebar_section_label(ui, "Project", self.colors);
                 if render_sidebar_scope_item(
                     ui,
                     icons::ASSET,
@@ -1015,7 +1018,7 @@ fn render_main(
             );
         });
     } else if matches!(renderable.view, NavigationView::Dashboard) {
-        render_dashboard_overview(ui, renderable, colors);
+        render_dashboard_overview(ui, model, renderable, colors);
     } else {
         render_workbench_table(ui, model, renderable, colors);
     }
@@ -1038,12 +1041,17 @@ fn render_inset_gap(ui: &mut egui::Ui) {
     ui.add_space(1.0);
 }
 
-fn render_dashboard_overview(ui: &mut egui::Ui, renderable: &RenderableView, colors: UiColors) {
+fn render_dashboard_overview(
+    ui: &mut egui::Ui,
+    model: &mut GuiModel,
+    renderable: &RenderableView,
+    colors: UiColors,
+) {
     ui.add_space(4.0);
-    let grid = dashboard_overview_grid(ui.available_width());
+    let content = workbench_content_grid(ui.available_width());
 
     ui.horizontal(|ui| {
-        ui.add_space(grid.heading_x);
+        ui.add_space(content.left);
         ui.label(
             egui::RichText::new("Overview")
                 .size(15.0)
@@ -1053,48 +1061,100 @@ fn render_dashboard_overview(ui: &mut egui::Ui, renderable: &RenderableView, col
     });
     ui.add_space(8.0);
 
-    for row in &renderable.main_rows {
-        render_dashboard_overview_row(ui, row, grid, colors);
+    let columns = if content.width >= 760.0 { 3 } else { 2 };
+    let gap = TABLE_COLUMN_GAP;
+    let card_width = ((content.width - gap * (columns as f32 - 1.0)) / columns as f32).max(180.0);
+    let card_height = 104.0;
+    for chunk in renderable.main_rows.chunks(columns) {
+        ui.horizontal(|ui| {
+            ui.add_space(content.left);
+            for (index, row) in chunk.iter().enumerate() {
+                render_dashboard_bento_block(ui, model, row, card_width, card_height, colors);
+                if index + 1 < chunk.len() {
+                    ui.add_space(gap);
+                }
+            }
+        });
+        ui.add_space(gap);
     }
 }
 
-fn render_dashboard_overview_row(
+fn render_dashboard_bento_block(
     ui: &mut egui::Ui,
+    model: &mut GuiModel,
     row: &RenderRow,
-    grid: DashboardOverviewGrid,
+    width: f32,
+    height: f32,
     colors: UiColors,
 ) {
-    let row_width = ui.available_width();
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(row_width, MAIN_ROW_HEIGHT), egui::Sense::hover());
-    let fill = workbench_row_fill(false, response.hovered(), colors);
-    let hover_alpha = ui.ctx().animate_bool_responsive(
-        ui.id().with(("dashboard_row_hover", row.id.as_str())),
-        response.hovered(),
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
+    let hovered = response.hovered() || response.has_focus();
+    let fill = if hovered {
+        colors.surface_2
+    } else {
+        colors.surface_1
+    };
+    ui.painter().rect_filled(
+        rect,
+        egui::Rounding::same(workbench_content_grid(width).row_rounding),
+        fill,
     );
-    if fill != egui::Color32::TRANSPARENT {
-        ui.painter().rect_filled(
-            rect.shrink2(egui::vec2(grid.row_label_x, 0.0)),
-            egui::Rounding::same(workbench_content_grid(row_width).row_rounding),
-            fade_color(fill, hover_alpha),
-        );
-    }
+    ui.painter().rect_stroke(
+        rect.shrink(0.5),
+        egui::Rounding::same(workbench_content_grid(width).row_rounding),
+        egui::Stroke::new(
+            1.0,
+            if hovered {
+                colors.hairline_strong
+            } else {
+                colors.hairline
+            },
+        ),
+    );
 
-    let mut row_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(grid.row_label_x, 0.0)))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
     let label = row.cells.first().map(String::as_str).unwrap_or("-");
     let value = row.cells.get(1).map(String::as_str).unwrap_or("-");
-    row_ui.add_sized(
-        [grid.label_width, MAIN_ROW_HEIGHT],
-        egui::Label::new(egui::RichText::new(label).color(colors.ink_muted)).truncate(),
+    ui.painter().text(
+        egui::pos2(rect.left() + 14.0, rect.top() + 16.0),
+        egui::Align2::LEFT_TOP,
+        label,
+        egui::FontId::proportional(13.0),
+        colors.ink_muted,
     );
-    row_ui.add_sized(
-        [grid.value_width, MAIN_ROW_HEIGHT],
-        egui::Label::new(egui::RichText::new(value).color(colors.ink).strong()).truncate(),
+    ui.painter().text(
+        egui::pos2(rect.left() + 14.0, rect.top() + 44.0),
+        egui::Align2::LEFT_TOP,
+        value,
+        egui::FontId::proportional(24.0),
+        colors.ink,
     );
+    ui.painter().text(
+        egui::pos2(rect.left() + 14.0, rect.bottom() - 18.0),
+        egui::Align2::LEFT_CENTER,
+        dashboard_block_hint(row.id.as_str()),
+        egui::FontId::proportional(12.0),
+        colors.ink_subtle,
+    );
+
+    if response.clicked() {
+        match row.id.as_str() {
+            "agent-space" => model.navigate(NavigationView::Skills),
+            "project-agent-space" | "projects" => model.navigate(NavigationView::Projects),
+            "agents" => model.navigate(NavigationView::Agents),
+            "plugins" => model.navigate(NavigationView::Plugins),
+            _ => {}
+        }
+    }
+}
+
+fn dashboard_block_hint(id: &str) -> &'static str {
+    match id {
+        "agent-space" => "Open Skill",
+        "project-agent-space" | "projects" => "Open Project",
+        "agents" => "Open Agent",
+        "plugins" => "Open Plugins",
+        _ => "Open",
+    }
 }
 
 fn render_workbench_table(
@@ -1404,6 +1464,30 @@ fn render_command_row(
     danger: bool,
     enabled: bool,
 ) -> egui::Response {
+    render_command_row_tone(
+        ui,
+        id_source,
+        icon,
+        label,
+        colors,
+        if danger {
+            CommandTone::Danger
+        } else {
+            CommandTone::Neutral
+        },
+        enabled,
+    )
+}
+
+fn render_command_row_tone(
+    ui: &mut egui::Ui,
+    id_source: impl std::hash::Hash,
+    icon: &str,
+    label: &str,
+    colors: UiColors,
+    tone: CommandTone,
+    enabled: bool,
+) -> egui::Response {
     let grid = workbench_content_grid(ui.available_width());
     let metrics = workbench_command_row_metrics();
     let sense = if enabled {
@@ -1436,13 +1520,7 @@ fn render_command_row(
         );
     }
 
-    let text_color = if !enabled {
-        colors.ink_tertiary
-    } else if danger {
-        colors.danger
-    } else {
-        colors.ink_muted
-    };
+    let text_color = command_tone_color(tone, enabled, colors);
     ui.painter().text(
         egui::pos2(row_rect.left() + metrics.icon_x, row_rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -1459,6 +1537,17 @@ fn render_command_row(
     );
 
     response
+}
+
+fn command_tone_color(tone: CommandTone, enabled: bool, colors: UiColors) -> egui::Color32 {
+    if !enabled {
+        return colors.ink_tertiary;
+    }
+    match tone {
+        CommandTone::Neutral => colors.ink_muted,
+        CommandTone::Success => colors.success,
+        CommandTone::Danger => colors.danger,
+    }
 }
 
 fn render_confirmation_message(ui: &mut egui::Ui, message: &str, colors: UiColors) {
@@ -1489,8 +1578,8 @@ fn table_column_widths(columns: &[String]) -> Vec<f32> {
         .iter()
         .map(|column| match column.as_str() {
             "Skill" | "Agent" => 156.0,
-            "Project skill directories" | "Path" => 280.0,
-            "Scope" | "Source" => 144.0,
+            "Skill folder" | "Path" => 280.0,
+            "Project" | "Source" => 144.0,
             "Status" | "Toggle" | "Enabled" | "Writable" | "Managed" | "Validation" => 112.0,
             "Updated" | "Outdated" | "Drift" | "Risk" => 120.0,
             _ => 132.0,
@@ -1564,10 +1653,10 @@ fn render_skill_filters(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColor
                 }
             });
 
-        ui.label(egui::RichText::new("Scope").color(colors.ink_subtle));
+        ui.label(egui::RichText::new("Project").color(colors.ink_subtle));
         let scope_text = model.skill_scope_filter().unwrap_or("All").to_string();
         egui::ComboBox::from_id_salt("skill_scope_filter")
-            .width(workbench_filter_width("Scope"))
+            .width(workbench_filter_width("Project"))
             .selected_text(scope_text)
             .show_ui(ui, |ui| {
                 if ui
@@ -1649,40 +1738,22 @@ fn render_action_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiCol
 fn render_project_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColors) {
     if let Some(draft) = model.open_project_draft().cloned() {
         let mut path_text = draft.path_text;
-        render_path_field(
+        render_form_path_field(
             ui,
-            "Project path",
+            "Project",
             &mut path_text,
             PathFieldKind::ExistingDirectory,
             colors,
         );
         model.update_open_project_path(path_text);
-        if render_command_row(
-            ui,
-            "project_open",
-            icons::BROWSE,
-            "Open",
-            colors,
-            false,
-            true,
-        )
-        .clicked()
-        {
-            let _ = model.request_save_open_project();
-        }
-        if render_command_row(
-            ui,
-            "project_open_cancel",
-            icons::CANCEL,
-            "Cancel",
-            colors,
-            false,
-            true,
-        )
-        .clicked()
-        {
-            model.cancel_open_project();
-        }
+        render_form_button_row(ui, |ui| {
+            if render_workbench_button(ui, icons::BROWSE, "Open", colors, false, true).clicked() {
+                let _ = model.request_save_open_project();
+            }
+            if render_workbench_button(ui, icons::CANCEL, "Cancel", colors, false, true).clicked() {
+                model.cancel_open_project();
+            }
+        });
         return;
     }
 
@@ -1775,13 +1846,20 @@ fn render_skill_action_button(
     colors: UiColors,
     action: SkillAction,
 ) {
-    let clicked = render_command_row(
+    let tone = if matches!(action, SkillAction::CancelSelection) {
+        CommandTone::Success
+    } else if matches!(action, SkillAction::Disable) {
+        CommandTone::Danger
+    } else {
+        CommandTone::Neutral
+    };
+    let clicked = render_command_row_tone(
         ui,
         ("skill_action", action.label()),
         icons::skill_action_icon(action),
         skill_action_command_label(action, false),
         colors,
-        matches!(action, SkillAction::Disable),
+        tone,
         true,
     )
     .clicked();
@@ -1794,6 +1872,9 @@ fn render_skill_action_button(
         SkillAction::ScanAgentSpaces => {
             let _ = model.request_scan_agent_spaces();
         }
+        SkillAction::CancelSelection => {
+            model.clear_skill_instance_selection();
+        }
         SkillAction::Enable => {
             let _ = model.request_enable_selected_skill_instance();
         }
@@ -1804,10 +1885,15 @@ fn render_skill_action_button(
 }
 
 fn render_skill_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColors) {
+    for action in skill_actions(model) {
+        render_skill_action_button(ui, model, colors, action);
+    }
+
     if model
         .pending_disable_skill_instance_confirmation()
         .is_some()
     {
+        ui.add_space(2.0);
         render_confirmation_message(ui, SKILL_INSTANCE_DISABLE_CONFIRMATION_MESSAGE, colors);
         if render_command_row(
             ui,
@@ -1822,11 +1908,6 @@ fn render_skill_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors: UiColo
         {
             let _ = model.confirm_pending_disable_skill_instance();
         }
-        ui.add_space(4.0);
-    }
-
-    for action in skill_actions(model) {
-        render_skill_action_button(ui, model, colors, action);
     }
 }
 
@@ -1874,14 +1955,12 @@ fn render_agent_editor_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors:
         let is_add = matches!(draft.mode, AgentEditorMode::AddCustom);
 
         if is_add {
-            ui.label(egui::RichText::new("Agent id").color(colors.ink_subtle));
-            ui.text_edit_singleline(&mut id_text);
-            ui.label(egui::RichText::new("Label").color(colors.ink_subtle));
-            ui.text_edit_singleline(&mut label_text);
+            render_form_text_field(ui, "Agent id", &mut id_text, colors);
+            render_form_text_field(ui, "Label", &mut label_text, colors);
         }
-        render_path_field(
+        render_form_path_field(
             ui,
-            "Project Skill dir",
+            "Skill folder",
             &mut project_dir_text,
             PathFieldKind::AgentProjectDir,
             colors,
@@ -1889,32 +1968,14 @@ fn render_agent_editor_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors:
         model.update_agent_editor_identity(id_text, label_text);
         model.update_agent_editor_project_dir(project_dir_text);
 
-        if render_command_row(
-            ui,
-            "agent_editor_save",
-            icons::SAVE,
-            "Save",
-            colors,
-            false,
-            true,
-        )
-        .clicked()
-        {
-            let _ = model.request_save_agent_editor();
-        }
-        if render_command_row(
-            ui,
-            "agent_editor_cancel",
-            icons::CANCEL,
-            "Cancel",
-            colors,
-            false,
-            true,
-        )
-        .clicked()
-        {
-            model.cancel_agent_editor();
-        }
+        render_form_button_row(ui, |ui| {
+            if render_workbench_button(ui, icons::SAVE, "Save", colors, false, true).clicked() {
+                let _ = model.request_save_agent_editor();
+            }
+            if render_workbench_button(ui, icons::CANCEL, "Cancel", colors, false, true).clicked() {
+                model.cancel_agent_editor();
+            }
+        });
         return;
     }
 
@@ -1923,19 +1984,40 @@ fn render_agent_editor_controls(ui: &mut egui::Ui, model: &mut GuiModel, colors:
     }
 }
 
-fn render_path_field(
+fn render_form_text_field(ui: &mut egui::Ui, label: &str, value: &mut String, colors: UiColors) {
+    let grid = workbench_content_grid(ui.available_width());
+    ui.horizontal(|ui| {
+        ui.add_space(grid.left);
+        ui.add_sized(
+            [128.0, 28.0],
+            egui::Label::new(egui::RichText::new(label).color(colors.ink_subtle)),
+        );
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .font(egui::TextStyle::Monospace)
+                .desired_width((grid.width - 128.0 - TABLE_COLUMN_GAP).min(360.0)),
+        );
+    });
+}
+
+fn render_form_path_field(
     ui: &mut egui::Ui,
     label: &str,
     value: &mut String,
     kind: PathFieldKind,
     colors: UiColors,
 ) {
-    ui.label(egui::RichText::new(label).color(colors.ink_subtle));
+    let grid = workbench_content_grid(ui.available_width());
     ui.horizontal(|ui| {
+        ui.add_space(grid.left);
+        ui.add_sized(
+            [128.0, 28.0],
+            egui::Label::new(egui::RichText::new(label).color(colors.ink_subtle)),
+        );
         ui.add(
             egui::TextEdit::singleline(value)
                 .font(egui::TextStyle::Monospace)
-                .desired_width(190.0),
+                .desired_width((grid.width - 128.0 - 292.0).max(180.0).min(420.0)),
         );
         if render_workbench_button(ui, icons::BROWSE, "Browse", colors, false, true).clicked() {
             if let Some(path) = browse_for_folder(value) {
@@ -1961,12 +2043,24 @@ fn render_path_field(
         }
     });
     if let Some(message) = path_validation_message(value, kind) {
-        ui.label(
-            egui::RichText::new(message)
-                .color(colors.warning)
-                .size(12.0),
-        );
+        ui.horizontal(|ui| {
+            ui.add_space(grid.left + 128.0);
+            ui.label(
+                egui::RichText::new(message)
+                    .color(colors.warning)
+                    .size(12.0),
+            );
+        });
     }
+}
+
+fn render_form_button_row(ui: &mut egui::Ui, add_buttons: impl FnOnce(&mut egui::Ui)) {
+    let grid = workbench_content_grid(ui.available_width());
+    ui.horizontal(|ui| {
+        ui.add_space(grid.left + 128.0);
+        add_buttons(ui);
+    });
+    ui.add_space(4.0);
 }
 
 fn path_exists(value: &str) -> bool {
@@ -2061,10 +2155,10 @@ fn render_project_action_button(
             let _ = model.request_deploy_selected_skill_to_target_agent();
         }
         ProjectAction::Enable => {
-            let _ = model.request_enable_selected_deployment();
+            let _ = model.request_enable_selected_skill_instance();
         }
         ProjectAction::Disable => {
-            let _ = model.request_disable_selected_deployment();
+            let _ = model.request_disable_selected_skill_instance();
         }
         ProjectAction::Redeploy => {
             let _ = model.request_redeploy_selected_deployment();
